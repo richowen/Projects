@@ -18,7 +18,7 @@ const int ledPin = 15;
 const int speakerPin = 18;
 
 // Timing settings
-const unsigned long reconnectInterval = 30000; // 30 seconds
+const unsigned long reconnectInterval = 20000; // 30 seconds
 
 // LED settings
 const int ledChannel = 0;
