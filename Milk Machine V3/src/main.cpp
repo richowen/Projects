@@ -1,67 +1,221 @@
 #include <Arduino.h>
+#include "config.h"
+#include "wifi_manager.h"
+#include "lcd_manager.h"
+#include "home_assistant.h"
 
-// Define pin connections
-const int mixerpin = 26;   // Auger DC motor
-const int waterpin = 25;  // Agitator DC motor
-const int augerpin = 16;   // 240V AC solenoid
-const int agitatorpin = 17;   // 240V AC mixer motor
-const int sensorPin = 18;   // Liquid level sensor
-const int ledpin = 19;
+// Global variables
+State currentState = IDLE;
+unsigned long stateStartTime = 0;
+unsigned long mixingStartTime = 0;
+bool isError = false;
+bool sensorActivatedDuringPostMix = false;
+
+// Function declarations
+void setupPins();
+void handleIdleState();
+void handleWaitingPreMixState();
+void handleMixingState();
+void handleWaitingPostMixState();
+void handleErrorState();
+void transitionTo(State newState);
+void updateLED();
+const char* getStateString(State state);
+void updateDevices(State state);
+bool readDebouncedSensor();
 
 void setup() {
-  // Set pin modes
-  pinMode(mixerpin, OUTPUT);
-  pinMode(waterpin, OUTPUT);
-  pinMode(augerpin, OUTPUT);
-  pinMode(agitatorpin, OUTPUT);
+    Serial.begin(115200);
+    while (!Serial) {
+        ; // Wait for Serial to be ready
+    }
+    Serial.println("Serial communication initialized");
+    
+    setupPins();
+    setupLCD();
+    setupWiFi();  // Make sure this sets up the WiFi connection
+    setupHomeAssistant();
+    digitalWrite(ledPin, HIGH);
+}
+
+void setupPins() {
+  pinMode(mixerPin, OUTPUT);
+  pinMode(waterPin, OUTPUT);
+  pinMode(augerPin, OUTPUT);
+  pinMode(agitatorPin, OUTPUT);
   pinMode(sensorPin, INPUT_PULLUP);
-  pinMode(ledpin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
 
   // Initialize all devices to off
-  digitalWrite(mixerpin, HIGH);
-  digitalWrite(waterpin, HIGH);
-  digitalWrite(augerpin, HIGH);
-  digitalWrite(agitatorpin, HIGH);
+  digitalWrite(mixerPin, HIGH);
+  digitalWrite(waterPin, HIGH);
+  digitalWrite(augerPin, HIGH);
+  digitalWrite(agitatorPin, HIGH);
+}
 
-  digitalWrite(ledpin, HIGH);
+void handleWaitingPreMixState() {
+  if (!readDebouncedSensor()) {
+    transitionTo(IDLE);
+  } else if (millis() - stateStartTime >= waitingDuration) {
+    transitionTo(MIXING);
+  }
+}
+
+void handleMixingState() {
+  if (!readDebouncedSensor()) {
+    sensorActivatedDuringPostMix = false;
+    transitionTo(WAITING_POST_MIX);
+  } else if (millis() - mixingStartTime >= maxMixingDuration) {
+    transitionTo(ERROR);
+  }
+}
+
+
+void handleWaitingPostMixState() {
+  if (readDebouncedSensor()) {
+    sensorActivatedDuringPostMix = true;
+  }
+  
+  if (millis() - stateStartTime >= waitingDuration) {
+    if (sensorActivatedDuringPostMix) {
+      transitionTo(MIXING);
+    } else {
+      transitionTo(IDLE);
+    }
+  }
+}
+
+void handleErrorState() {
+  // In error state, all devices should be off
+  digitalWrite(mixerPin, HIGH);
+  digitalWrite(waterPin, HIGH);
+  digitalWrite(augerPin, HIGH);
+  digitalWrite(agitatorPin, HIGH);
+
+  // Check if error condition is resolved
+  if (!readDebouncedSensor()) {
+    isError = false;
+    transitionTo(IDLE);
+  }
+}
+
+void transitionTo(State newState) {
+    currentState = newState;
+    stateStartTime = millis();
+
+    if (newState == MIXING) {
+        mixingStartTime = millis();
+    }
+
+    const char* stateStr = getStateString(newState);
+    updateLCD(currentState);
+    updateDevices(newState);
+    
+    // Update Home Assistant
+    updateHomeAssistant(stateStr);
+}
+
+void updateLED() {
+  if (isError) {
+    // Flash LED during error state
+    digitalWrite(ledPin, (millis() / 500) % 2);
+  } else {
+    // Keep LED on as power indicator in all other states
+    digitalWrite(ledPin, HIGH);
+  }
+}
+
+const char* getStateString(State state) {
+  switch (state) {
+    case IDLE: return "idle";
+    case WAITING_PRE_MIX: return "waiting_pre_mix";
+    case MIXING: return "mixing";
+    case WAITING_POST_MIX: return "waiting_post_mix";
+    case ERROR: return "error";
+    default: return "unknown";
+  }
+}
+
+void updateDevices(State state) {
+  switch (state) {
+    case IDLE:
+    case WAITING_PRE_MIX:
+      digitalWrite(mixerPin, HIGH);
+      digitalWrite(waterPin, HIGH);
+      digitalWrite(augerPin, HIGH);
+      digitalWrite(agitatorPin, HIGH);
+      break;
+    case MIXING:
+      digitalWrite(mixerPin, LOW);
+      digitalWrite(waterPin, LOW);
+      digitalWrite(augerPin, LOW);
+      digitalWrite(agitatorPin, LOW);
+      break;
+    case WAITING_POST_MIX:
+      digitalWrite(mixerPin, LOW);
+      digitalWrite(waterPin, HIGH);
+      digitalWrite(augerPin, HIGH);
+      digitalWrite(agitatorPin, HIGH);
+      break;
+    case ERROR:
+      digitalWrite(mixerPin, HIGH);
+      digitalWrite(waterPin, HIGH);
+      digitalWrite(augerPin, HIGH);
+      digitalWrite(agitatorPin, HIGH);
+      break;
+  }
+}
+
+void handleIdleState() {
+  if (readDebouncedSensor()) {
+    transitionTo(WAITING_PRE_MIX);
+  }
+}
+
+bool readDebouncedSensor() {
+  static unsigned long lastDebounceTime = 0;
+  static int lastSteadyState = LOW;
+  static int lastFlickerableState = LOW;
+  
+  int currentState = digitalRead(sensorPin);
+  unsigned long currentTime = millis();
+
+  if (currentState != lastFlickerableState) {
+    lastDebounceTime = currentTime;
+    lastFlickerableState = currentState;
+  }
+
+  if ((currentTime - lastDebounceTime) > debounceDelay) {
+    if (lastSteadyState != currentState) {
+      lastSteadyState = currentState;
+    }
+  }
+
+  return lastSteadyState == HIGH;
 }
 
 void loop() {
-  static unsigned long offTime = 0; // Time when pins were turned off
-  static unsigned long onTime = 0;  // Time when sensor reads HIGH
-  const unsigned long mixerOnDuration = 5000; // Mixer on duration in milliseconds
-  const unsigned long feedDelay = 5000;       // Delay before turning on devices
+    loopHomeAssistant();
 
-  // Check if the liquid level sensor reads HIGH
-  if (digitalRead(sensorPin) == HIGH) {
-    // Check if this is the first time sensor reads HIGH
-    if (onTime == 0) {
-      onTime = millis(); // Store the time when sensor reads HIGH
-    } else if (millis() - onTime > feedDelay) {
-      // If the delay has passed, turn on all devices
-      digitalWrite(mixerpin, LOW);
-      digitalWrite(waterpin, LOW);
-      digitalWrite(augerpin, LOW);
-      digitalWrite(agitatorpin, LOW);
-      offTime = 0; // Reset the off time
+    switch (currentState) {
+        case IDLE:
+            handleIdleState();
+            break;
+        case WAITING_PRE_MIX:
+            handleWaitingPreMixState();
+            break;
+        case MIXING:
+            handleMixingState();
+            break;
+        case WAITING_POST_MIX:
+            handleWaitingPostMixState();
+            break;
+        case ERROR:
+            handleErrorState();
+            break;
     }
-  } else { // If the sensor reads LOW
-    onTime = 0; // Reset the on time
-    digitalWrite(waterpin, HIGH);
-    digitalWrite(augerpin, HIGH);
-    digitalWrite(agitatorpin, HIGH);
-
-    // Check if this is the first time turning off
-    if (offTime == 0) {
-      offTime = millis(); // Store the time when devices were turned off
-    } else if (millis() - offTime > mixerOnDuration) {
-      // If the mixer has been on long enough, turn it off
-      digitalWrite(mixerpin, HIGH);
-    }
-  }
-  
-  // Safety feature: Add a delay to prevent rapid switching
-  delay(1000); // 1-second delay
+    
+    updateLED();
+    updateLCD(currentState);
+    delay(50);
 }
-
-
