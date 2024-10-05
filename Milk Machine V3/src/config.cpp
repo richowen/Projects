@@ -29,3 +29,4 @@ const int ledPin = 19;
 const unsigned long waitingDuration = 5000;
 const unsigned long maxMixingDuration = 60000;
 const unsigned long debounceDelay = 500;
+const unsigned long LCD_UPDATE_INTERVAL = 1000;

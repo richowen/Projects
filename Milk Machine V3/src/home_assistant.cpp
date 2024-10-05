@@ -30,7 +30,7 @@ void reconnect() {
     if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD)) {
       Serial.println("connected");
       // Once connected, publish an announcement...
-      mqttClient.publish(MQTT_TOPIC, "Milk Mixer connected");
+      mqttClient.publish(MQTT_STATE_TOPIC, "Milk Mixer connected");
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
@@ -48,11 +48,19 @@ void loopHomeAssistant() {
   mqttClient.loop();
 }
 
-void updateHomeAssistant(const char* state) {
+void updateHomeAssistant(const char* state, int hopperLevel) {
   if (mqttClient.connected()) {
-    mqttClient.publish(MQTT_TOPIC, state);
+    mqttClient.publish(MQTT_STATE_TOPIC, state);
+    
+    // Convert hopper level to string and publish
+    char hopperStr[8];
+    snprintf(hopperStr, sizeof(hopperStr), "%d", hopperLevel);
+    mqttClient.publish(MQTT_HOPPER_TOPIC, hopperStr);
+    
     Serial.print("Updated Home Assistant state: ");
-    Serial.println(state);
+    Serial.print(state);
+    Serial.print(", Hopper level: ");
+    Serial.println(hopperLevel);
   } else {
     Serial.println("Failed to update Home Assistant: not connected");
   }

@@ -3,6 +3,8 @@
 #include "wifi_manager.h"
 #include "lcd_manager.h"
 #include "home_assistant.h"
+#include "laser_sensor.h"
+#include <Wire.h>
 
 // Global variables
 State currentState = IDLE;
@@ -10,6 +12,7 @@ unsigned long stateStartTime = 0;
 unsigned long mixingStartTime = 0;
 bool isError = false;
 bool sensorActivatedDuringPostMix = false;
+int hopperLevel = 0;
 
 // Function declarations
 void setupPins();
@@ -23,6 +26,7 @@ void updateLED();
 const char* getStateString(State state);
 void updateDevices(State state);
 bool readDebouncedSensor();
+void updateLCDWithSensorInfo();
 
 void setup() {
     Serial.begin(115200);
@@ -31,11 +35,26 @@ void setup() {
     }
     Serial.println("Serial communication initialized");
     
+    Wire.begin();  // Initialize I2C
+    delay(100);  // Give some time for I2C bus to stabilize
+    
     setupPins();
+    Serial.println("Pins setup complete");
+    
     setupLCD();
-    setupWiFi();  // Make sure this sets up the WiFi connection
+    Serial.println("LCD setup complete");
+    
+    setupLaserSensor();
+    Serial.println("Laser sensor setup complete");
+    
+    setupWiFi();
+    Serial.println("WiFi setup complete");
+    
     setupHomeAssistant();
+    Serial.println("Home Assistant setup complete");
+    
     digitalWrite(ledPin, HIGH);
+    Serial.println("Setup complete");
 }
 
 void setupPins() {
@@ -70,7 +89,6 @@ void handleMixingState() {
   }
 }
 
-
 void handleWaitingPostMixState() {
   if (readDebouncedSensor()) {
     sensorActivatedDuringPostMix = true;
@@ -92,10 +110,24 @@ void handleErrorState() {
   digitalWrite(augerPin, HIGH);
   digitalWrite(agitatorPin, HIGH);
 
-  // Check if error condition is resolved
-  if (!readDebouncedSensor()) {
-    isError = false;
-    transitionTo(IDLE);
+  // Check if the error is due to low hopper level
+  if (isHopperLow()) {
+    updateLCD(ERROR, hopperLevel, "Low Hopper");
+    
+    // Check if hopper has been refilled
+    if (!isHopperLow()) {
+      isError = false;
+      transitionTo(IDLE);
+    }
+  } else {
+    // Handle other types of errors (e.g., mixing time exceeded)
+    updateLCD(ERROR, hopperLevel, "Mix time Exceeded");
+
+    // Check if error condition is resolved (original condition)
+    if (!readDebouncedSensor()) {
+      isError = false;
+      transitionTo(IDLE);
+    }
   }
 }
 
@@ -108,11 +140,8 @@ void transitionTo(State newState) {
     }
 
     const char* stateStr = getStateString(newState);
-    updateLCD(currentState);
+    updateLCD(currentState, hopperLevel);
     updateDevices(newState);
-    
-    // Update Home Assistant
-    updateHomeAssistant(stateStr);
 }
 
 void updateLED() {
@@ -167,8 +196,11 @@ void updateDevices(State state) {
 }
 
 void handleIdleState() {
-  if (readDebouncedSensor()) {
+  if (readDebouncedSensor() && !isHopperLow()) {
     transitionTo(WAITING_PRE_MIX);
+  } else if (isHopperLow()) {
+    displayMessage("Hopper Low!");
+    delay(2000);
   }
 }
 
@@ -194,8 +226,29 @@ bool readDebouncedSensor() {
   return lastSteadyState == HIGH;
 }
 
+void updateLCDWithSensorInfo() {
+  clearLCD();
+  setCursor(0, 0);
+  printLCD(getStateString(currentState));
+  
+  setCursor(0, 1);
+  printLCD("Hopper: ");
+  printLCD(hopperLevel);
+  printLCD("%");
+}
+
+unsigned long lastLCDUpdate = 0;
+State lastReportedState = IDLE;
+int lastReportedHopperLevel = -1;  // Initialize to an impossible value to ensure first update
+
 void loop() {
     loopHomeAssistant();
+    hopperLevel = readHopperLevel();
+
+    // Check for low hopper level
+    if (isHopperLow() && currentState != ERROR) {
+        transitionTo(ERROR);
+    }
 
     switch (currentState) {
         case IDLE:
@@ -216,6 +269,28 @@ void loop() {
     }
     
     updateLED();
-    updateLCD(currentState);
+    
+    // Update LCD if the interval has passed
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
+        if (currentState == ERROR) {
+            if (isHopperLow()) {
+                updateLCD(currentState, hopperLevel, "Low Hopper");
+            } else {
+                updateLCD(currentState, hopperLevel, "Mix time");
+            }
+        } else {
+            updateLCD(currentState, hopperLevel);
+        }
+        lastLCDUpdate = currentMillis;
+    }
+
+    // Update Home Assistant if state or hopper level has changed
+    if (currentState != lastReportedState || hopperLevel != lastReportedHopperLevel) {
+        updateHomeAssistant(getStateString(currentState), hopperLevel);
+        lastReportedState = currentState;
+        lastReportedHopperLevel = hopperLevel;
+    }
+
     delay(50);
 }

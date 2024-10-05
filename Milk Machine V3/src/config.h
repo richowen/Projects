@@ -32,6 +32,7 @@ extern const int ledPin;
 extern const unsigned long waitingDuration;
 extern const unsigned long maxMixingDuration;
 extern const unsigned long debounceDelay;
+extern const unsigned long LCD_UPDATE_INTERVAL;
 
 // State enum
 enum State {
