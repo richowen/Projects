@@ -1,5 +1,4 @@
 #include <Wire.h>
-// laser_sensor.cpp
 #include "laser_sensor.h"
 
 void setupLaserSensor() {
@@ -39,13 +38,13 @@ bool writeReg(uint8_t reg, const uint8_t* pBuf, size_t size) {
 int readHopperLevel() {
   uint8_t buf[2] = {0};
   uint8_t dat = 0xB0;
-  
+ 
   writeReg(0x10, &dat, 1);
   delay(50);
   readReg(0x02, buf, 2);
-  
+ 
   int distance = buf[0] * 0x100 + buf[1] + 10;
-  
+ 
   // Convert distance to a percentage
   int level = map(distance, HOPPER_FULL_DISTANCE, HOPPER_EMPTY_THRESHOLD, 100, 0);
   return constrain(level, 0, 100);

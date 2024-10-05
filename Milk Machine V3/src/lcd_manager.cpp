@@ -38,9 +38,15 @@ void updateLCD(State state, int hopperLevel, const char* errorMessage) {
       lcd.print("ERROR: ");
       if (errorMessage) {
         lcd.print(errorMessage);
-      } else {
-        lcd.print("Unknown");
       }
+      break;
+    case WASH_STANDBY:
+      lcd.setRGB(255, 165, 0);  // Orange
+      lcd.print("WASH STANDBY");
+      break;
+    case WASH_DISPENSE:
+      lcd.setRGB(0, 255, 255);  // Cyan
+      lcd.print("WASH DISPENSE");
       break;
   }
  
@@ -64,7 +70,6 @@ void displayHopperLevel(int level) {
 void setLCDColor(int r, int g, int b) {
   lcd.setRGB(r, g, b);
 }
-
 
 void displayMessage(const char* message) {
   lcd.clear();

@@ -24,6 +24,9 @@ const int augerPin = 16;
 const int agitatorPin = 17;
 const int sensorPin = 18;
 const int ledPin = 19;
+const int washStandbyPin = 23;
+const int washDispensePin = 5;
+const int resetSwitchPin = 13;
 
 // Timing constants
 const unsigned long waitingDuration = 5000;

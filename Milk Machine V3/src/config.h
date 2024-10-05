@@ -2,6 +2,7 @@
 
 #ifndef CONFIG_H
 #define CONFIG_H
+#define FILTER_SAMPLES 10
 
 #include <Arduino.h>
 
@@ -27,6 +28,9 @@ extern const int augerPin;
 extern const int agitatorPin;
 extern const int sensorPin;
 extern const int ledPin;
+extern const int washStandbyPin;
+extern const int washDispensePin;
+extern const int resetSwitchPin;
 
 // Timing constants
 extern const unsigned long waitingDuration;
@@ -34,13 +38,15 @@ extern const unsigned long maxMixingDuration;
 extern const unsigned long debounceDelay;
 extern const unsigned long LCD_UPDATE_INTERVAL;
 
-// State enum
+// Updated State enum
 enum State {
   IDLE,
   WAITING_PRE_MIX,
   MIXING,
   WAITING_POST_MIX,
-  ERROR
+  ERROR,
+  WASH_STANDBY,
+  WASH_DISPENSE
 };
 
 #endif // CONFIG_H
