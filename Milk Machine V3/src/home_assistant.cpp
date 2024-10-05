@@ -5,13 +5,13 @@
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
-void callback(char* topic, byte* payload, unsigned int length) {
+void callback(char * topic, byte * payload, unsigned int length) {
   // Handle incoming messages here if needed
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
   for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    Serial.print((char) payload[i]);
   }
   Serial.println();
 }
@@ -48,15 +48,15 @@ void loopHomeAssistant() {
   mqttClient.loop();
 }
 
-void updateHomeAssistant(const char* state, int hopperLevel) {
+void updateHomeAssistant(const char * state, int hopperLevel) {
   if (mqttClient.connected()) {
     mqttClient.publish(MQTT_STATE_TOPIC, state);
-    
+
     // Convert hopper level to string and publish
     char hopperStr[8];
     snprintf(hopperStr, sizeof(hopperStr), "%d", hopperLevel);
     mqttClient.publish(MQTT_HOPPER_TOPIC, hopperStr);
-    
+
     Serial.print("Updated Home Assistant state: ");
     Serial.print(state);
     Serial.print(", Hopper level: ");
