@@ -1,10 +1,10 @@
 // wifi_manager.h
 
-#ifndef WIFI_MANAGER_H       // Include guard to prevent multiple inclusions of this header file
+#ifndef WIFI_MANAGER_H
 #define WIFI_MANAGER_H
 
-#include <WiFi.h>            // Include library for WiFi functionality
+#include <WiFi.h>
 
-void setupWiFi();            // Function prototype to set up WiFi connection
+void setupWiFi();
 
-#endif // WIFI_MANAGER_H     // End of include guard
+#endif // WIFI_MANAGER_H

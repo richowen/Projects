@@ -1,107 +1,110 @@
-#include "lcd_manager.h"                 // Include header file for LCD management functions
-#include <Wire.h>                        // Include Wire library for I2C communication
-#include <DFRobot_RGBLCD1602.h>          // Include library for RGB LCD module
+#include "lcd_manager.h"
 
-// Create an instance of the RGB LCD with the specified address and dimensions
+#include <Wire.h>
+
+#include <DFRobot_RGBLCD1602.h>
+
+// Make sure this address matches your LCD module
 DFRobot_RGBLCD1602 lcd( /*RGBAddr*/ 0x2D, /*lcdCols*/ 16, /*lcdRows*/ 2);
 
 void setupLCD() {
-  Serial.println("Initializing LCD...");  // Print message to Serial Monitor
-  lcd.init();                             // Initialize the LCD
-  lcd.setRGB(0, 255, 0);                  // Set initial backlight color to green
-  lcd.clear();                            // Clear the display
-  lcd.print("Milk Mixer Ready");          // Display a welcome message
-  Serial.println("LCD initialized");      // Confirm LCD initialization in Serial Monitor
+  Serial.println("Initializing LCD...");
+  lcd.init();
+  lcd.setRGB(0, 255, 0); // Set initial backlight color to green
+  lcd.clear();
+  lcd.print("Milk Mixer Ready");
+  Serial.println("LCD initialized");
 }
 
-void updateLCD(State state, int hopperLevel, const char * errorMessage) {
-  lcd.clear();                            // Clear the LCD for fresh display
+void updateLCD(State state, int hopperLevel,
+  const char * errorMessage) {
+  lcd.clear();
   switch (state) {
   case IDLE:
-    lcd.setRGB(0, 255, 0);                // Set backlight color to green
-    lcd.print("READY");                   // Display "READY" message
+    lcd.setRGB(0, 255, 0); // Green
+    lcd.print("READY");
     break;
   case WAITING_PRE_MIX:
-    lcd.setRGB(255, 255, 0);              // Set backlight color to yellow
-    lcd.print("WAITING");                 // Display "WAITING" message
+    lcd.setRGB(255, 255, 0); // Yellow
+    lcd.print("WAITING");
     break;
   case MIXING:
-    lcd.setRGB(0, 0, 255);                // Set backlight color to blue
-    lcd.print("MIXING");                  // Display "MIXING" message
+    lcd.setRGB(0, 0, 255); // Blue
+    lcd.print("MIXING");
     break;
   case WAITING_POST_MIX:
-    lcd.setRGB(0, 255, 255);              // Set backlight color to cyan
-    lcd.print("FINISHING");               // Display "FINISHING" message
+    lcd.setRGB(0, 255, 255); // Cyan
+    lcd.print("FINISHING");
     break;
   case ERROR:
-    lcd.setRGB(255, 0, 0);                // Set backlight color to red
-    lcd.print("ERROR: ");                 // Display "ERROR:" message
+    lcd.setRGB(255, 0, 0); // Red
+    lcd.print("ERROR: ");
     if (errorMessage) {
-      lcd.print(errorMessage);            // Print the specific error message if provided
+      lcd.print(errorMessage);
     }
     break;
   case WASH_STANDBY:
-    lcd.setRGB(255, 165, 0);              // Set backlight color to orange
-    lcd.print("WASH STANDBY");            // Display "WASH STANDBY" message
+    lcd.setRGB(255, 165, 0); // Orange
+    lcd.print("WASH STANDBY");
     break;
   case WASH_DISPENSE:
-    lcd.setRGB(0, 255, 255);              // Set backlight color to cyan
-    lcd.print("WASH DISPENSE");           // Display "WASH DISPENSE" message
+    lcd.setRGB(0, 255, 255); // Cyan
+    lcd.print("WASH DISPENSE");
     break;
   }
 
-  displayHopperLevel(hopperLevel);       // Update the display with the current hopper level
+  displayHopperLevel(hopperLevel);
 }
 
 void displayHopperLevel(int level) {
-  lcd.setCursor(0, 1);                   // Move cursor to the second line
+  lcd.setCursor(0, 1);
 
-  int barLength = map(level, 0, 100, 0, 16); // Map hopper level (0-100%) to bar length (0-16 characters)
+  int barLength = map(level, 0, 100, 0, 16); // Map 0-100% to 0-16 characters
 
-  for (int i = 0; i < 16; i++) {         // Loop to create a visual representation of the hopper level
+  for (int i = 0; i < 16; i++) {
     if (i < barLength) {
-      lcd.write(byte(255));              // Write a full block character for the filled part of the bar
+      lcd.write(byte(255)); // Full block character
     } else {
-      lcd.write(' ');                    // Write a space for the empty part of the bar
+      lcd.write(' ');
     }
   }
 }
 
 void setLCDColor(int r, int g, int b) {
-  lcd.setRGB(r, g, b);                   // Set the RGB color of the LCD backlight
+  lcd.setRGB(r, g, b);
 }
 
 void displayMessage(const char * message) {
-  lcd.clear();                           // Clear the LCD before displaying the new message
-  lcd.print(message);                    // Display the provided message on the LCD
+  lcd.clear();
+  lcd.print(message);
 }
 
 void displayMessageLine2(const char * message) {
-  lcd.setCursor(0, 1);                   // Move cursor to the second line
-  lcd.print(message);                    // Display the provided message on the second line
+  lcd.setCursor(0, 1);
+  lcd.print(message);
 }
 
 void clearLCD() {
-  lcd.clear();                           // Clear the entire LCD display
+  lcd.clear();
 }
 
 void setCursor(int col, int row) {
-  lcd.setCursor(col, row);               // Set the cursor position on the LCD
+  lcd.setCursor(col, row);
 }
 
 void printLCD(const char * message) {
-  lcd.print(message);                    // Print a string message to the LCD
+  lcd.print(message);
 }
 
 void printLCD(int value) {
-  lcd.print(value);                      // Print an integer value to the LCD
+  lcd.print(value);
 }
 
 void displayIPAddress(IPAddress ip) {
-  lcd.setCursor(0, 1);                   // Move cursor to the second line
-  lcd.print(ip.toString());              // Display the IP address as a string
+  lcd.setCursor(0, 1);
+  lcd.print(ip.toString());
 }
 
 void displayDot() {
-  lcd.print(".");                        // Print a dot on the LCD, often used for progress indication
+  lcd.print(".");
 }
