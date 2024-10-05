@@ -1,88 +1,83 @@
-#include <Arduino.h>
-
-#include "config.h"
-
-#include "wifi_manager.h"
-
-#include "lcd_manager.h"
-
-#include "home_assistant.h"
-
-#include "laser_sensor.h"
-
-#include <Wire.h>
+#include <Arduino.h>          // Arduino core library
+#include "config.h"           // Custom configuration settings
+#include "wifi_manager.h"     // WiFi management functions
+#include "lcd_manager.h"      // LCD control functions
+#include "home_assistant.h"   // Home Assistant integration
+#include "laser_sensor.h"     // Laser sensor control
+#include <Wire.h>             // I2C communication library
 
 // Global variables
-State currentState = IDLE;
-unsigned long stateStartTime = 0;
-unsigned long mixingStartTime = 0;
-bool sensorActivatedDuringPostMix = false;
-int hopperLevel = 0;
-unsigned long lastLCDUpdate = 0;
-State lastReportedState = IDLE;
-int lastReportedHopperLevel = -1;
-uint8_t currentErrors = 0;
-const uint8_t ERROR_HOPPER_LOW = 0x01;
-const uint8_t ERROR_MIX_TIME_EXCEEDED = 0x02;
+State currentState = IDLE;    // System's current state, starts as IDLE
+unsigned long stateStartTime = 0;  // Timestamp when state started
+unsigned long mixingStartTime = 0; // Timestamp when mixing started
+bool sensorActivatedDuringPostMix = false; // Tracks if sensor was triggered after mixing
+int hopperLevel = 0;          // Level of hopper (ingredient container)
+unsigned long lastLCDUpdate = 0;  // Time of last LCD update
+State lastReportedState = IDLE;   // Last reported state to Home Assistant
+int lastReportedHopperLevel = -1; // Last reported hopper level
+uint8_t currentErrors = 0;        // Current error flags
+const uint8_t ERROR_HOPPER_LOW = 0x01;       // Error code for low hopper level
+const uint8_t ERROR_MIX_TIME_EXCEEDED = 0x02; // Error code for exceeded mix time
 
 // Function declarations
-void setupPins();
-void handleIdleState();
-void handleWaitingPreMixState();
-void handleMixingState();
-void handleWaitingPostMixState();
-void handleErrorState();
-void handleWashStandbyState();
-void handleWashDispenseState();
-void transitionTo(State newState);
-void updateLED();
-const char * getStateString(State state);
-void updateDevices(State state);
-bool readDebouncedSensor();
-void updateLCDWithSensorInfo();
-State readWashMode();
-bool checkForErrors();
+void setupPins();                    // Configures the hardware pins
+void handleIdleState();              // Handles behavior in IDLE state
+void handleWaitingPreMixState();     // Handles behavior before mixing
+void handleMixingState();            // Handles mixing state
+void handleWaitingPostMixState();    // Handles behavior after mixing
+void handleErrorState();             // Handles error conditions
+void handleWashStandbyState();       // Handles wash standby state
+void handleWashDispenseState();      // Handles wash dispense state
+void transitionTo(State newState);   // Transition to a new state
+void updateLED();                    // Updates LED status based on system state
+const char * getStateString(State state); // Returns state name as a string
+void updateDevices(State state);     // Updates devices (mixer, water, etc.) based on state
+bool readDebouncedSensor();          // Reads sensor input with debouncing
+void updateLCDWithSensorInfo();      // Updates the LCD with sensor and system info
+State readWashMode();                // Determines the current wash mode
+bool checkForErrors();               // Checks for system errors
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);              // Initialize serial communication at 115200 baud
   while (!Serial) {
     ; // Wait for Serial to be ready
   }
   Serial.println("Serial communication initialized");
 
-  Wire.begin(); // Initialize I2C
-  delay(100); // Give some time for I2C bus to stabilize
+  Wire.begin();                      // Initialize I2C bus for communication
+  delay(100);                        // Delay to stabilize the I2C bus
 
-  setupPins();
+  setupPins();                       // Set up the pins for various devices
   Serial.println("Pins setup complete");
 
-  setupLCD();
+  setupLCD();                        // Set up the LCD screen
   Serial.println("LCD setup complete");
 
-  setupLaserSensor();
+  setupLaserSensor();                // Set up the laser sensor for measuring hopper level
   Serial.println("Laser sensor setup complete");
 
-  setupWiFi();
+  setupWiFi();                       // Connect to WiFi network
   Serial.println("WiFi setup complete");
 
-  setupHomeAssistant();
+  setupHomeAssistant();              // Initialize communication with Home Assistant
   Serial.println("Home Assistant setup complete");
 
-  digitalWrite(ledPin, HIGH);
+  digitalWrite(ledPin, HIGH);        // Turn on the LED to indicate system power
   Serial.println("Setup complete");
 }
 
 void setupPins() {
+  // Configure hardware pins as input/output
   pinMode(mixerPin, OUTPUT);
   pinMode(waterPin, OUTPUT);
   pinMode(augerPin, OUTPUT);
   pinMode(agitatorPin, OUTPUT);
-  pinMode(sensorPin, INPUT_PULLUP);
+  pinMode(sensorPin, INPUT_PULLUP);  // Pull-up resistor for sensor input
   pinMode(ledPin, OUTPUT);
-  pinMode(washStandbyPin, INPUT_PULLUP);
-  pinMode(washDispensePin, INPUT_PULLUP);
+  pinMode(washStandbyPin, INPUT_PULLUP);   // Pull-up for wash standby button
+  pinMode(washDispensePin, INPUT_PULLUP);  // Pull-up for wash dispense button
 
-  // Initialize all devices to off
+  // Initialize devices to off (HIGH means off for some devices)
   digitalWrite(mixerPin, HIGH);
   digitalWrite(waterPin, HIGH);
   digitalWrite(augerPin, HIGH);
@@ -91,41 +86,48 @@ void setupPins() {
 
 void handleIdleState() {
   if (readDebouncedSensor() && !isHopperLow()) {
+    // If the sensor is activated and the hopper is not low, transition to pre-mix state
     transitionTo(WAITING_PRE_MIX);
   } else if (isHopperLow()) {
+    // If the hopper is low, display a warning message
     displayMessage("Hopper Low!");
-    delay(2000);
+    delay(2000);  // Wait for 2 seconds
   }
 }
 
 void handleWaitingPreMixState() {
   if (!readDebouncedSensor()) {
+    // If the sensor is deactivated, return to idle state
     transitionTo(IDLE);
   } else if (millis() - stateStartTime >= waitingDuration) {
+    // If enough time has passed, transition to mixing state
     transitionTo(MIXING);
   }
 }
 
 void handleMixingState() {
   if (!readDebouncedSensor()) {
+    // If sensor is deactivated, move to post-mix state
     sensorActivatedDuringPostMix = false;
     transitionTo(WAITING_POST_MIX);
   } else if (millis() - mixingStartTime >= maxMixingDuration) {
-    currentErrors |= ERROR_MIX_TIME_EXCEEDED; // Set error flag
-    transitionTo(ERROR); // Move to error state
+    // If mixing time exceeds limit, trigger error
+    currentErrors |= ERROR_MIX_TIME_EXCEEDED;
+    transitionTo(ERROR);  // Transition to error state
   }
 }
 
 void handleWaitingPostMixState() {
   if (readDebouncedSensor()) {
-    sensorActivatedDuringPostMix = true;
+    sensorActivatedDuringPostMix = true;  // Record sensor activation
   }
 
   if (millis() - stateStartTime >= waitingDuration) {
+    // If enough time has passed, decide next state
     if (sensorActivatedDuringPostMix) {
-      transitionTo(MIXING);
+      transitionTo(MIXING);  // Restart mixing if sensor was activated
     } else {
-      transitionTo(IDLE);
+      transitionTo(IDLE);    // Go back to idle if no sensor activity
     }
   }
 }
@@ -133,35 +135,33 @@ void handleWaitingPostMixState() {
 bool checkForErrors() {
   uint8_t newErrors = 0;
 
-  // Check for low hopper level
   if (isHopperLow()) {
+    // Set hopper low error flag
     newErrors |= ERROR_HOPPER_LOW;
   }
 
-  // Check for exceeding max mixing time
   if (currentState == MIXING && (millis() - mixingStartTime >= maxMixingDuration)) {
+    // Set mixing time exceeded error flag
     newErrors |= ERROR_MIX_TIME_EXCEEDED;
   }
 
-  // Only update currentErrors if we're not already in an error state
   if (currentState != ERROR) {
-    currentErrors = newErrors;
+    currentErrors = newErrors;  // Update error state only if not already in error
   }
 
-  return currentErrors != 0;
+  return currentErrors != 0;  // Return true if errors exist
 }
 
 void handleErrorState() {
-  // In error state, all devices should be off
-  updateDevices(ERROR);
+  updateDevices(ERROR);   // Turn off devices during error state
 
-  // Display error messages on the LCD
+  // Display error messages on LCD
   clearLCD();
   setCursor(0, 0);
   printLCD("ERROR:");
   setCursor(0, 1);
 
-  // Display error messages based on the current error flags
+  // Show error based on flags
   if (currentErrors & ERROR_HOPPER_LOW) {
     printLCD("Low Hopper");
   }
@@ -169,63 +169,59 @@ void handleErrorState() {
     printLCD("Mix Time Exceeded");
   }
 
-  // Check for active errors that still persist
+  // Check for persistent errors
   uint8_t newErrors = 0;
-
-  // Check if the hopper is still low
   if (isHopperLow()) {
     newErrors |= ERROR_HOPPER_LOW;
   }
-
-  // Keep the mix time exceeded error active until manually cleared
   if (currentErrors & ERROR_MIX_TIME_EXCEEDED) {
-    newErrors |= ERROR_MIX_TIME_EXCEEDED; // Keep this error active
+    newErrors |= ERROR_MIX_TIME_EXCEEDED;
   }
 
-  // Only clear errors that have been fully resolved
-  currentErrors = newErrors;
+  currentErrors = newErrors;  // Update current errors
 
-  // Transition to IDLE only if all errors have been resolved
   if (currentErrors == 0) {
+    // Transition back to idle if all errors are cleared
     transitionTo(IDLE);
   }
 }
 
 void handleWashStandbyState() {
-  // All devices off in wash standby mode
-  updateDevices(WASH_STANDBY);
+  updateDevices(WASH_STANDBY);   // Turn off devices in wash standby
 }
 
 void handleWashDispenseState() {
-  // Only water on in wash dispense mode
-  updateDevices(WASH_DISPENSE);
+  updateDevices(WASH_DISPENSE);  // Only turn on water in wash dispense mode
 }
 
 void transitionTo(State newState) {
-  currentState = newState;
-  stateStartTime = millis();
+  currentState = newState;      // Update the current state
+  stateStartTime = millis();    // Record the time the state started
 
   if (newState == MIXING) {
-    mixingStartTime = millis();
+    mixingStartTime = millis();  // Record the start time for mixing
   }
 
+  // Print state transition message to serial monitor
   const char * stateStr = getStateString(newState);
   Serial.printf("Transitioning to state: %s\n", stateStr);
-  updateLCD(currentState, hopperLevel);
-  updateDevices(newState);
+
+  updateLCD(currentState, hopperLevel);  // Update the LCD with new state info
+  updateDevices(newState);               // Update device outputs based on state
 }
 
 void updateLED() {
   if (currentState == ERROR) {
-    // Flash LED during error state
+    // Flash LED if the system is in error state
     digitalWrite(ledPin, (millis() / 500) % 2);
   } else {
-    // Keep LED on as power indicator in all other states
+    // Keep LED on in other states
     digitalWrite(ledPin, HIGH);
   }
 }
 
 const char * getStateString(State state) {
+  // Returns a string representation of the current state
   switch (state) {
   case IDLE:
     return "idle";
@@ -247,29 +243,34 @@ const char * getStateString(State state) {
 }
 
 void updateDevices(State state) {
+  // Update device outputs (e.g., mixer, water, auger) based on state
   switch (state) {
   case ERROR:
   case IDLE:
   case WAITING_PRE_MIX:
   case WASH_STANDBY:
+    // Turn all devices off
     digitalWrite(mixerPin, HIGH);
     digitalWrite(waterPin, HIGH);
     digitalWrite(augerPin, HIGH);
     digitalWrite(agitatorPin, HIGH);
     break;
   case MIXING:
+    // Turn on all devices for mixing
     digitalWrite(mixerPin, LOW);
     digitalWrite(waterPin, LOW);
     digitalWrite(augerPin, LOW);
     digitalWrite(agitatorPin, LOW);
     break;
   case WAITING_POST_MIX:
+    // Keep mixer on, turn off other devices
     digitalWrite(mixerPin, LOW);
     digitalWrite(waterPin, HIGH);
     digitalWrite(augerPin, HIGH);
     digitalWrite(agitatorPin, HIGH);
     break;
   case WASH_DISPENSE:
+    // Only turn on water for washing
     digitalWrite(mixerPin, HIGH);
     digitalWrite(waterPin, LOW);
     digitalWrite(augerPin, HIGH);
@@ -279,28 +280,32 @@ void updateDevices(State state) {
 }
 
 bool readDebouncedSensor() {
+  // Debounce logic to prevent noisy sensor readings
   static unsigned long lastDebounceTime = 0;
-  static int lastSteadyState = LOW;
-  static int lastFlickerableState = LOW;
+  static int lastSteadyState = LOW;  // Last stable state
+  static int lastFlickerableState = LOW;  // Temporary flickering state
 
-  int currentState = digitalRead(sensorPin);
-  unsigned long currentTime = millis();
+  int currentState = digitalRead(sensorPin);  // Read current sensor state
+  unsigned long currentTime = millis();       // Get current time
 
   if (currentState != lastFlickerableState) {
+    // Reset debounce timer if sensor state changed
     lastDebounceTime = currentTime;
     lastFlickerableState = currentState;
   }
 
   if ((currentTime - lastDebounceTime) > debounceDelay) {
+    // If enough time has passed, update steady state
     if (lastSteadyState != currentState) {
       lastSteadyState = currentState;
     }
   }
 
-  return lastSteadyState == HIGH;
+  return lastSteadyState == HIGH;  // Return true if sensor is stable and HIGH
 }
 
 void updateLCDWithSensorInfo() {
+  // Clear and update LCD with current state and hopper level
   clearLCD();
   setCursor(0, 0);
   printLCD(getStateString(currentState));
@@ -312,83 +317,84 @@ void updateLCDWithSensorInfo() {
 }
 
 State readWashMode() {
+  // Read the wash mode based on switch inputs
   bool standbyActive = digitalRead(washStandbyPin) == LOW;
   bool dispenseActive = digitalRead(washDispensePin) == LOW;
 
   if (standbyActive && dispenseActive) {
-    return WASH_DISPENSE;
+    return WASH_DISPENSE;  // Both switches activated
   } else if (standbyActive && !dispenseActive) {
-    return WASH_STANDBY;
+    return WASH_STANDBY;   // Only standby switch activated
   } else {
-    return IDLE; // Normal operation when both switches are open or only dispense is active
+    return IDLE;           // Default to normal operation
   }
 }
 
 void loop() {
-  loopHomeAssistant();
-  hopperLevel = readHopperLevel();
+  loopHomeAssistant();  // Keep Home Assistant connected and updated
+  hopperLevel = readHopperLevel();  // Update hopper level from sensor
 
-  // Always check for errors
+  // Check for errors before processing states
   if (checkForErrors()) {
     if (currentState != ERROR) {
-      transitionTo(ERROR); // Ensure we only transition to error once
+      transitionTo(ERROR);  // Enter error state if an error is detected
     }
-    handleErrorState();
-    return; // Prevent further state transitions in case of an error
+    handleErrorState();     // Handle error conditions
+    return;  // Exit early if there's an error
   }
 
-  State washMode = readWashMode();
+  State washMode = readWashMode();  // Determine if we're in a wash mode
   switch (washMode) {
   case IDLE:
-    if (currentState == WASH_STANDBY || currentState == WASH_DISPENSE) {
-      transitionTo(IDLE);
-    } else {
-      // Normal operation
-      switch (currentState) {
-      case IDLE:
-        handleIdleState();
-        break;
-      case WAITING_PRE_MIX:
-        handleWaitingPreMixState();
-        break;
-      case MIXING:
-        handleMixingState();
-        break;
-      case WAITING_POST_MIX:
-        handleWaitingPostMixState();
-        break;
-      }
+    // Handle normal operation
+    switch (currentState) {
+    case IDLE:
+      handleIdleState();  // Manage idle behavior
+      break;
+    case WAITING_PRE_MIX:
+      handleWaitingPreMixState();  // Manage pre-mixing behavior
+      break;
+    case MIXING:
+      handleMixingState();  // Manage mixing behavior
+      break;
+    case WAITING_POST_MIX:
+      handleWaitingPostMixState();  // Manage post-mixing behavior
+      break;
     }
     break;
-  case WASH_STANDBY:
+   case WASH_STANDBY:
     if (currentState != WASH_STANDBY) {
+      // Transition to wash standby state if not already in it
       transitionTo(WASH_STANDBY);
     }
-    handleWashStandbyState();
+    handleWashStandbyState(); // Manage operations in wash standby state
     break;
+  
   case WASH_DISPENSE:
     if (currentState != WASH_DISPENSE) {
+      // Transition to wash dispense state if not already in it
       transitionTo(WASH_DISPENSE);
     }
-    handleWashDispenseState();
+    handleWashDispenseState(); // Manage operations in wash dispense state
     break;
   }
 
-  updateLED();
+  updateLED(); // Update LED status based on the current state
 
-  // Update LCD if the interval has passed
-  unsigned long currentMillis = millis();
+  // Update LCD display if the designated interval has passed
+  unsigned long currentMillis = millis(); // Get current time in milliseconds
   if (currentMillis - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
-    updateLCD(currentState, hopperLevel);
-    lastLCDUpdate = currentMillis;
+    updateLCD(currentState, hopperLevel); // Update LCD with current state and hopper level
+    lastLCDUpdate = currentMillis; // Record the last update time
   }
 
-  // Update Home Assistant if state or hopper level has changed
+  // Update Home Assistant if the state or hopper level has changed
   if (currentState != lastReportedState || hopperLevel != lastReportedHopperLevel) {
+    // Notify Home Assistant with the current state and hopper level
     updateHomeAssistant(getStateString(currentState), hopperLevel);
-    lastReportedState = currentState;
-    lastReportedHopperLevel = hopperLevel;
+    lastReportedState = currentState; // Store the last reported state
+    lastReportedHopperLevel = hopperLevel; // Store the last reported hopper level
   }
 
-  delay(50);
+  delay(50); // Delay to limit loop execution speed (reduces CPU load)
 }
