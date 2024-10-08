@@ -1,6 +1,6 @@
 #include <Wire.h>
-
 #include "laser_sensor.h"
+#include "config.h"
 
 void setupLaserSensor() {
   Wire.begin(); // Ensure Wire is initialized here
@@ -37,23 +37,35 @@ bool writeReg(uint8_t reg,
   return (Wire.endTransmission() == 0);
 }
 
+// Function to read and debounce the laser sensor data
 int readHopperLevel() {
-  uint8_t buf[2] = {
-    0
-  };
+  uint8_t buf[2] = {0};
   uint8_t dat = 0xB0;
 
-  writeReg(0x10, & dat, 1);
-  delay(50);
-  readReg(0x02, buf, 2);
+  writeReg(0x10, &dat, 1);   // Write register to request distance data
+  delay(50);                 // Small delay for sensor response
+  readReg(0x02, buf, 2);     // Read the sensor data into buffer
 
-  int distance = buf[0] * 0x100 + buf[1] + 10;
+  // Convert the raw data into distance
+  int currentReading = buf[0] * 0x100 + buf[1] + 10;
 
-  // Convert distance to a percentage
-  int level = map(distance, HOPPER_FULL_DISTANCE, HOPPER_EMPTY_THRESHOLD, 100, 0);
-  return constrain(level, 0, 100);
+  // Debouncing logic
+  if (abs(currentReading - lastStableReading) > 5) { // Threshold for considering a significant change
+    if (millis() - lastStableTime >= debounceDelay) {
+      lastStableReading = currentReading;  // Accept the new stable reading
+      lastStableTime = millis();           // Update the time of the stable reading
+    }
+  } else {
+    // If the difference is small, just update the time without changing the stable reading
+    lastStableTime = millis();
+  }
+
+  // Convert distance to a percentage based on HOPPER_FULL_DISTANCE and HOPPER_EMPTY_THRESHOLD
+  int level = map(lastStableReading, HOPPER_FULL_DISTANCE, HOPPER_EMPTY_THRESHOLD, 100, 0);
+  return constrain(level, 0, 100); // Return the debounced and constrained level
 }
 
+// Function to check if the hopper is low with debounced readings
 bool isHopperLow() {
-  return readHopperLevel() < 20; // Consider hopper low when below 20%
+  return readHopperLevel() < 10; // Consider hopper low when below 10%
 }

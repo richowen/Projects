@@ -37,6 +37,9 @@ extern const unsigned long waitingDuration;
 extern const unsigned long maxMixingDuration;
 extern const unsigned long debounceDelay;
 extern const unsigned long LCD_UPDATE_INTERVAL;
+extern unsigned long lastStableTime; 
+extern int lastStableReading;
+
 
 // Updated State enum
 enum State {

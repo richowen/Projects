@@ -33,3 +33,5 @@ const unsigned long waitingDuration = 5000;
 const unsigned long maxMixingDuration = 60000;
 const unsigned long debounceDelay = 500;
 const unsigned long LCD_UPDATE_INTERVAL = 1000;
+int lastStableReading = 0;
+unsigned long lastStableTime = 0; 
