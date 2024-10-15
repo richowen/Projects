@@ -18,10 +18,10 @@ const char * haUrl = "http://ha.richowen.me/api/states/sensor.milk_mixer_state";
 const char * haToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjZGM3YTYxYzMzYWQ0ZGE5ODI1MzUzZmVmYWFlYjUzNSIsImlhdCI6MTcyNzk4MzMyNywiZXhwIjoyMDQzMzQzMzI3fQ.v3gDsAgbXr5LfX-Y032ARICuzotNL9hyT-1zmqv_Iao";
 
 // Pin definitions
-const int mixerPin = 26;
-const int waterPin = 25;
-const int augerPin = 16;
-const int agitatorPin = 17;
+const int mixerPin = 16;
+const int waterPin = 17;
+const int augerPin = 25;
+const int agitatorPin = 26;
 const int sensorPin = 18;
 const int ledPin = 19;
 const int washStandbyPin = 23;
