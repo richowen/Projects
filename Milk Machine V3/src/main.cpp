@@ -4,6 +4,7 @@
 #include "lcd_manager.h"
 #include "home_assistant.h"
 #include "laser_sensor.h"
+#include "liquid_level_sensor.h"
 #include <Wire.h>
 
 // Global variables
@@ -18,6 +19,7 @@ int lastReportedHopperLevel = -1;
 uint8_t currentErrors = 0;
 const uint8_t ERROR_HOPPER_LOW = 0x01;
 const uint8_t ERROR_MIX_TIME_EXCEEDED = 0x02;
+DualProbeSensor liquidSensor(probe1Pin, probe2Pin);
 
 // Function declarations
 void setupPins();
@@ -43,6 +45,8 @@ void setup() {
     ; // Wait for Serial to be ready
   }
   Serial.println("Serial communication initialized");
+
+  liquidSensor.begin();
 
   Wire.begin(); // Initialize I2C
   delay(100); // Give some time for I2C bus to stabilize
@@ -71,7 +75,6 @@ void setupPins() {
   pinMode(waterPin, OUTPUT);
   pinMode(augerPin, OUTPUT);
   pinMode(agitatorPin, OUTPUT);
-  pinMode(sensorPin, INPUT_PULLUP);
   pinMode(ledPin, OUTPUT);
   pinMode(washStandbyPin, INPUT_PULLUP);
   pinMode(washDispensePin, INPUT_PULLUP);
@@ -116,12 +119,14 @@ void updateDevices(State state) {
 }
 
 void handleIdleState() {
-  if (readDebouncedSensor() && !isHopperLow()) {
-    transitionTo(WAITING_PRE_MIX);
-  } else if (isHopperLow()) {
-    currentErrors |= ERROR_HOPPER_LOW; // Set error flag for low hopper
-    transitionTo(ERROR); // Move to error state
-  }
+    liquidSensor.update();
+    
+    if (liquidSensor.shouldStartMixing() && !isHopperLow()) {
+        transitionTo(WAITING_PRE_MIX);
+    } else if (isHopperLow()) {
+        currentErrors |= ERROR_HOPPER_LOW;
+        transitionTo(ERROR);
+    }
 }
 
 void handleWaitingPreMixState() {
@@ -133,21 +138,21 @@ void handleWaitingPreMixState() {
 }
 
 void handleMixingState() {
-  // Check if the sensor is no longer activated
-  if (!readDebouncedSensor()) {
-    sensorActivatedDuringPostMix = false;
-    transitionTo(WAITING_POST_MIX);
-  } 
-  // Check if mixing time exceeded the maximum allowed duration
-  else if (millis() - mixingStartTime >= maxMixingDuration) {
-    currentErrors |= ERROR_MIX_TIME_EXCEEDED; // Set error flag
-    transitionTo(ERROR); // Move to error state
-  } 
-  // Check if the hopper level is low during mixing
-  else if (isHopperLow()) {
-    currentErrors |= ERROR_HOPPER_LOW; // Set error flag for low hopper
-    transitionTo(ERROR); // Move to error state
-  }
+    liquidSensor.update();
+    
+    // Stop mixing when both probes are connected
+    if (liquidSensor.shouldStopMixing()) {
+        sensorActivatedDuringPostMix = false;
+        transitionTo(WAITING_POST_MIX);
+    } 
+    else if (millis() - mixingStartTime >= maxMixingDuration) {
+        currentErrors |= ERROR_MIX_TIME_EXCEEDED;
+        transitionTo(ERROR);
+    } 
+    else if (isHopperLow()) {
+        currentErrors |= ERROR_HOPPER_LOW;
+        transitionTo(ERROR);
+    }
 }
 
 void handleWaitingPostMixState() {
@@ -270,25 +275,9 @@ const char * getStateString(State state) {
 }
 
 bool readDebouncedSensor() {
-  static unsigned long lastDebounceTime = 0;
-  static int lastSteadyState = LOW;
-  static int lastFlickerableState = LOW;
-
-  int currentState = digitalRead(sensorPin);
-  unsigned long currentTime = millis();
-
-  if (currentState != lastFlickerableState) {
-    lastDebounceTime = currentTime;
-    lastFlickerableState = currentState;
-  }
-
-  if ((currentTime - lastDebounceTime) > debounceDelay) {
-    if (lastSteadyState != currentState) {
-      lastSteadyState = currentState;
-    }
-  }
-
-  return lastSteadyState == HIGH;
+    liquidSensor.update();
+    // Return true when NO probes are connected (to maintain compatibility with existing state machine)
+    return liquidSensor.shouldStartMixing();
 }
 
 void updateLCDWithSensorInfo() {
