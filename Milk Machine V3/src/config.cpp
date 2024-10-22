@@ -24,7 +24,6 @@ const int augerPin = 25;
 const int agitatorPin = 26;
 const int probe1Pin = 18;
 const int probe2Pin = 19;
-const int ledPin = 32;
 const int washStandbyPin = 23;
 const int washDispensePin = 5;
 const int resetSwitchPin = 13;

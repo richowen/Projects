@@ -45,7 +45,6 @@ extern int lastStableReading;
 // Updated State enum
 enum State {
   IDLE,
-  WAITING_PRE_MIX,
   MIXING,
   WAITING_POST_MIX,
   ERROR,

@@ -40,34 +40,33 @@ State readWashMode();
 bool checkForErrors();
 
 void setup() {
-  Serial.begin(115200);
-  while (!Serial) {
-    ; // Wait for Serial to be ready
-  }
-  Serial.println("Serial communication initialized");
+    Serial.begin(115200);
+    while (!Serial) {
+        ; // Wait for Serial to be ready
+    }
+    Serial.println("Serial communication initialized");
 
-  liquidSensor.begin();
+    liquidSensor.begin();
 
-  Wire.begin(); // Initialize I2C
-  delay(100); // Give some time for I2C bus to stabilize
+    Wire.begin(); // Initialize I2C
+    delay(100); // Give some time for I2C bus to stabilize
 
-  setupPins();
-  Serial.println("Pins setup complete");
+    setupPins();
+    Serial.println("Pins setup complete");
 
-  setupLCD();
-  Serial.println("LCD setup complete");
+    setupLCD();
+    Serial.println("LCD setup complete");
 
-  setupLaserSensor();
-  Serial.println("Laser sensor setup complete");
+    setupLaserSensor();
+    Serial.println("Laser sensor setup complete");
 
-  setupWiFi();
-  Serial.println("WiFi setup complete");
+    setupWiFi();
+    Serial.println("WiFi setup complete");
 
-  setupHomeAssistant();
-  Serial.println("Home Assistant setup complete");
+    setupHomeAssistant();
+    Serial.println("Home Assistant setup complete");
 
-  digitalWrite(ledPin, HIGH);
-  Serial.println("Setup complete");
+    Serial.println("Setup complete");
 }
 
 void setupPins() {
@@ -75,7 +74,6 @@ void setupPins() {
   pinMode(waterPin, OUTPUT);
   pinMode(augerPin, OUTPUT);
   pinMode(agitatorPin, OUTPUT);
-  pinMode(ledPin, OUTPUT);
   pinMode(washStandbyPin, INPUT_PULLUP);
   pinMode(washDispensePin, INPUT_PULLUP);
 
@@ -87,54 +85,45 @@ void setupPins() {
 }
 
 void updateDevices(State state) {
-  switch (state) {
-  case ERROR:
-  case IDLE:
-  case WAITING_PRE_MIX:
-  case WASH_STANDBY:
-    digitalWrite(mixerPin, HIGH);
-    digitalWrite(waterPin, HIGH);
-    digitalWrite(augerPin, HIGH);
-    digitalWrite(agitatorPin, HIGH);
-    break;
-  case MIXING:
-    digitalWrite(mixerPin, LOW);
-    digitalWrite(waterPin, LOW);
-    digitalWrite(augerPin, LOW);
-    digitalWrite(agitatorPin, LOW);
-    break;
-  case WAITING_POST_MIX:
-    digitalWrite(mixerPin, LOW);
-    digitalWrite(waterPin, HIGH);
-    digitalWrite(augerPin, HIGH);
-    digitalWrite(agitatorPin, HIGH);
-    break;
-  case WASH_DISPENSE:
-    digitalWrite(mixerPin, HIGH);
-    digitalWrite(waterPin, LOW);
-    digitalWrite(augerPin, HIGH);
-    digitalWrite(agitatorPin, HIGH);
-    break;
-  }
+    switch (state) {
+    case ERROR:
+    case IDLE:
+    case WASH_STANDBY:
+        digitalWrite(mixerPin, HIGH);
+        digitalWrite(waterPin, HIGH);
+        digitalWrite(augerPin, HIGH);
+        digitalWrite(agitatorPin, HIGH);
+        break;
+    case MIXING:
+        digitalWrite(mixerPin, LOW);
+        digitalWrite(waterPin, LOW);
+        digitalWrite(augerPin, LOW);
+        digitalWrite(agitatorPin, LOW);
+        break;
+    case WAITING_POST_MIX:
+        digitalWrite(mixerPin, LOW);
+        digitalWrite(waterPin, HIGH);
+        digitalWrite(augerPin, HIGH);
+        digitalWrite(agitatorPin, HIGH);
+        break;
+    case WASH_DISPENSE:
+        digitalWrite(mixerPin, HIGH);
+        digitalWrite(waterPin, LOW);
+        digitalWrite(augerPin, HIGH);
+        digitalWrite(agitatorPin, HIGH);
+        break;
+    }
 }
 
 void handleIdleState() {
     liquidSensor.update();
     
     if (liquidSensor.shouldStartMixing() && !isHopperLow()) {
-        transitionTo(WAITING_PRE_MIX);
+        transitionTo(MIXING);
     } else if (isHopperLow()) {
         currentErrors |= ERROR_HOPPER_LOW;
         transitionTo(ERROR);
     }
-}
-
-void handleWaitingPreMixState() {
-  if (!readDebouncedSensor()) {
-    transitionTo(IDLE);
-  } else if (millis() - stateStartTime >= waitingDuration) {
-    transitionTo(MIXING);
-  }
 }
 
 void handleMixingState() {
@@ -253,25 +242,23 @@ void updateLED() {
   }
 }
 
-const char * getStateString(State state) {
-  switch (state) {
-  case IDLE:
-    return "idle";
-  case WAITING_PRE_MIX:
-    return "waiting_pre_mix";
-  case MIXING:
-    return "mixing";
-  case WAITING_POST_MIX:
-    return "waiting_post_mix";
-  case ERROR:
-    return "error";
-  case WASH_STANDBY:
-    return "wash_standby";
-  case WASH_DISPENSE:
-    return "wash_dispense";
-  default:
-    return "unknown";
-  }
+const char* getStateString(State state) {
+    switch (state) {
+    case IDLE:
+        return "idle";
+    case MIXING:
+        return "mixing";
+    case WAITING_POST_MIX:
+        return "waiting_post_mix";
+    case ERROR:
+        return "error";
+    case WASH_STANDBY:
+        return "wash_standby";
+    case WASH_DISPENSE:
+        return "wash_dispense";
+    default:
+        return "unknown";
+    }
 }
 
 bool readDebouncedSensor() {
@@ -305,70 +292,64 @@ State readWashMode() {
 }
 
 void loop() {
-  loopHomeAssistant();
-  hopperLevel = readHopperLevel();
+    loopHomeAssistant();
+    hopperLevel = readHopperLevel();
 
-  // Always check for errors
-  if (checkForErrors()) {
-    if (currentState != ERROR) {
-      transitionTo(ERROR); // Ensure we only transition to error once
+    // Always check for errors
+    if (checkForErrors()) {
+        if (currentState != ERROR) {
+            transitionTo(ERROR);
+        }
+        handleErrorState();
+        return;
     }
-    handleErrorState();
-    return; // Prevent further state transitions in case of an error
-  }
 
-  State washMode = readWashMode();
-  switch (washMode) {
-  case IDLE:
-    if (currentState == WASH_STANDBY || currentState == WASH_DISPENSE) {
-      transitionTo(IDLE);
-    } else {
-      // Normal operation
-      switch (currentState) {
-      case IDLE:
-        handleIdleState();
+    State washMode = readWashMode();
+    switch (washMode) {
+    case IDLE:
+        if (currentState == WASH_STANDBY || currentState == WASH_DISPENSE) {
+            transitionTo(IDLE);
+        } else {
+            // Normal operation with simplified state machine
+            switch (currentState) {
+            case IDLE:
+                handleIdleState();
+                break;
+            case MIXING:
+                handleMixingState();
+                break;
+            case WAITING_POST_MIX:
+                handleWaitingPostMixState();
+                break;
+            }
+        }
         break;
-      case WAITING_PRE_MIX:
-        handleWaitingPreMixState();
+    case WASH_STANDBY:
+        if (currentState != WASH_STANDBY) {
+            transitionTo(WASH_STANDBY);
+        }
+        handleWashStandbyState();
         break;
-      case MIXING:
-        handleMixingState();
+    case WASH_DISPENSE:
+        if (currentState != WASH_DISPENSE) {
+            transitionTo(WASH_DISPENSE);
+        }
+        handleWashDispenseState();
         break;
-      case WAITING_POST_MIX:
-        handleWaitingPostMixState();
-        break;
-      }
     }
-    break;
-  case WASH_STANDBY:
-    if (currentState != WASH_STANDBY) {
-      transitionTo(WASH_STANDBY);
+
+    // Update display routines
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
+        updateLCD(currentState, hopperLevel);
+        lastLCDUpdate = currentMillis;
     }
-    handleWashStandbyState();
-    break;
-  case WASH_DISPENSE:
-    if (currentState != WASH_DISPENSE) {
-      transitionTo(WASH_DISPENSE);
+
+    if (currentState != lastReportedState || hopperLevel != lastReportedHopperLevel) {
+        updateHomeAssistant(getStateString(currentState), hopperLevel);
+        lastReportedState = currentState;
+        lastReportedHopperLevel = hopperLevel;
     }
-    handleWashDispenseState();
-    break;
-  }
 
-  updateLED();
-
-  // Update LCD if the interval has passed
-  unsigned long currentMillis = millis();
-  if (currentMillis - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
-    updateLCD(currentState, hopperLevel);
-    lastLCDUpdate = currentMillis;
-  }
-
-  // Update Home Assistant if state or hopper level has changed
-  if (currentState != lastReportedState || hopperLevel != lastReportedHopperLevel) {
-    updateHomeAssistant(getStateString(currentState), hopperLevel);
-    lastReportedState = currentState;
-    lastReportedHopperLevel = hopperLevel;
-  }
-
-  delay(50);
+    delay(50);
 }

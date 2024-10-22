@@ -31,9 +31,7 @@ void setupWiFi() {
     displayMessage("WiFi Failed");
     displayMessage("Check Settings");
   }
-  delay(2000);
-
-  delay(2000);
+  delay(500);
   displayMessage("Starting...");
-  delay(1000);
+  delay(500);
 }

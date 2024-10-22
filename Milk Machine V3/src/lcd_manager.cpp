@@ -24,10 +24,6 @@ void updateLCD(State state, int hopperLevel,
     lcd.setRGB(0, 255, 0); // Green
     lcd.print("READY");
     break;
-  case WAITING_PRE_MIX:
-    lcd.setRGB(255, 255, 0); // Yellow
-    lcd.print("WAITING");
-    break;
   case MIXING:
     lcd.setRGB(0, 0, 255); // Blue
     lcd.print("MIXING");
