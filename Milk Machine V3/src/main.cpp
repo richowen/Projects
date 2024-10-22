@@ -31,7 +31,6 @@ void handleErrorState();
 void handleWashStandbyState();
 void handleWashDispenseState();
 void transitionTo(State newState);
-void updateLED();
 const char * getStateString(State state);
 void updateDevices(State state);
 bool readDebouncedSensor();

@@ -28,7 +28,6 @@ extern const int augerPin;
 extern const int agitatorPin;
 extern const int probe1Pin;
 extern const int probe2Pin;
-extern const int ledPin;
 extern const int washStandbyPin;
 extern const int washDispensePin;
 extern const int resetSwitchPin;
