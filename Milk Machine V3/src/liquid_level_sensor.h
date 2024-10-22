@@ -56,7 +56,7 @@ public:
 private:
     const int _probe1Pin;
     const int _probe2Pin;
-    static const unsigned long DEBOUNCE_DELAY = 50; // 50ms debounce
+    static const unsigned long DEBOUNCE_DELAY = 1000; // 50ms debounce
 
     bool _probe1Active = false;
     bool _probe2Active = false;
