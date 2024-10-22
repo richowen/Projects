@@ -231,16 +231,6 @@ void transitionTo(State newState) {
   updateDevices(newState);
 }
 
-void updateLED() {
-  if (currentState == ERROR) {
-    // Flash LED during error state
-    digitalWrite(ledPin, (millis() / 500) % 2);
-  } else {
-    // Keep LED on as power indicator in all other states
-    digitalWrite(ledPin, HIGH);
-  }
-}
-
 const char* getStateString(State state) {
     switch (state) {
     case IDLE:
