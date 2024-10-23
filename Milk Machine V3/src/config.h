@@ -52,3 +52,13 @@ enum State {
 };
 
 #endif // CONFIG_H
+
+#ifdef DEBUG
+    #define DEBUG_PRINT(x) if(Serial) Serial.print(x)
+    #define DEBUG_PRINTLN(x) if(Serial) Serial.println(x)
+    #define DEBUG_PRINTF(x, ...) if(Serial) Serial.printf(x, __VA_ARGS__)
+#else
+    #define DEBUG_PRINT(x)
+    #define DEBUG_PRINTLN(x)
+    #define DEBUG_PRINTF(x, ...)
+#endif
