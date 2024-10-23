@@ -9,8 +9,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 #include <WiFiClient.h>  // For Telnet
 #include <ESPmDNS.h>     // For mDNS service
 
@@ -32,8 +30,7 @@ LaserSensor laserSensor;  // Laser sensor object
 WaterLevelSensor waterSensor;
 
 // Web Server
-WebServer server(80);  // Initialize the web server on port 80
-
+WebServer server(80);  // Initialize WebServer
 
 // Telnet Server
 WiFiServer telnetServer(23);
@@ -63,7 +60,7 @@ void handleWashDispenseState();
 void handleErrorState();
 State readWashMode();
 void updateDevices(State state);
-void setupOTA();
+const char* getStateString(State state);
 void handleTelnet();
 
 // ----------------- Setup and Loop -----------------
@@ -90,6 +87,8 @@ void setup() {
         Serial.print(".");
     }
     Serial.println("\nWiFi connected");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
 
     // Start mDNS service
     if (!MDNS.begin("MyESP32")) {
@@ -97,11 +96,6 @@ void setup() {
     } else {
         Serial.println("mDNS responder started");
     }
-
-    // Start the web server and ElegantOTA
-    server.on("/", HTTP_GET, []() {
-        server.send(200, "text/plain", "Welcome to the OTA Update Server");
-    });
 
     // Initialize ElegantOTA
     ElegantOTA.begin(&server);
@@ -121,17 +115,34 @@ void setup() {
 }
 
 void loop() {
-    // Periodically update sensors
-    if (millis() - lastSensorUpdate >= 1000) {
-        updateSensors();
-        lastSensorUpdate = millis();
+    // Check for wash mode changes
+    State washMode = readWashMode();
+    if ((washMode == WASH_STANDBY || washMode == WASH_DISPENSE) && washMode != currentState) {
+        // Transition to wash mode states
+        if (washMode == WASH_STANDBY) {
+            transitionTo(WASH_STANDBY, handleWashStandbyState);
+        } else if (washMode == WASH_DISPENSE) {
+            transitionTo(WASH_DISPENSE, handleWashDispenseState);
+        }
+    } else if ((currentState == WASH_STANDBY || currentState == WASH_DISPENSE) && washMode == IDLE) {
+        // Transition back to IDLE when wash mode is deactivated
+        transitionTo(IDLE, handleIdleState);
     }
 
-    // Process errors
-    handleErrors();
+    // Proceed with the rest of the loop only if not in wash modes
+    if (currentState != WASH_STANDBY && currentState != WASH_DISPENSE) {
+        // Periodically update sensors
+        if (millis() - lastSensorUpdate >= 1000) {
+            updateSensors();
+            lastSensorUpdate = millis();
+        }
 
-    // Execute current state
-    executeCurrentState();
+        // Process errors
+        handleErrors();
+
+        // Execute current state
+        executeCurrentState();
+    }
 
     // Periodically update the LCD
     if (millis() - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
@@ -141,12 +152,12 @@ void loop() {
 
     loopHomeAssistant();
 
-     // Handle web server requests and ElegantOTA updates
+    // Handle web server requests and ElegantOTA updates
     server.handleClient();
-    ElegantOTA.loop();
 
-    handleTelnet();       // Handle Telnet communication
+    handleTelnet();  // Handle Telnet communication
 }
+
 
 // ----------------- Telnet Setup -----------------
 
