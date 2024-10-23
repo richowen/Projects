@@ -15,12 +15,19 @@
 #define MQTT_STATE_TOPIC "homeassistant/sensor/milk_mixer/state"
 #define MQTT_HOPPER_TOPIC "homeassistant/sensor/milk_mixer/hopper_level"
 
+// Global MQTT client object
 extern PubSubClient mqttClient;
 
+// Setup Home Assistant integration (initialize MQTT)
 void setupHomeAssistant();
+
+// Main loop for Home Assistant (keeps the MQTT connection alive)
 void loopHomeAssistant();
+
+// Update the state and hopper level in Home Assistant
 void updateHomeAssistant(const char* state, int hopperLevel);
+
+// Reconnect to MQTT broker if the connection is lost
 void reconnect();
-void callback(char* topic, byte* payload, unsigned int length);
 
 #endif // HOME_ASSISTANT_H

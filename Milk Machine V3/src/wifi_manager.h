@@ -5,6 +5,10 @@
 
 #include <WiFi.h>
 
+// Initialize the WiFi connection
 void setupWiFi();
+
+// Keep the WiFi connection alive and handle reconnection if necessary
+void ensureWiFiConnection();
 
 #endif // WIFI_MANAGER_H
