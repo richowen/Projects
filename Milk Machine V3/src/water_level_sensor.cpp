@@ -5,10 +5,6 @@ WaterLevelSensor::WaterLevelSensor() : _readIndex(0), _readCount(0), _currentLev
     memset(_highData, 0, sizeof(_highData));
 }
 
-void WaterLevelSensor::begin() {
-    Wire.begin();
-}
-
 bool WaterLevelSensor::update() {
     // Only update if the interval has passed
     if (millis() - _lastReadTime < READ_INTERVAL) {

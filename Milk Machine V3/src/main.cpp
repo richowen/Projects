@@ -21,6 +21,7 @@ StateHandler currentStateHandler = nullptr;
 // Error flags
 const uint8_t ERROR_HOPPER_LOW = 0x01;
 const uint8_t ERROR_MIX_TIME_EXCEEDED = 0x02;
+const uint8_t ERROR_WATER_SENSOR_FAILURE = 0x03;
 
 State currentState = IDLE;
 unsigned long stateStartTime = 0;
@@ -73,9 +74,6 @@ void setup() {
     if (!laserSensor.begin()) {
         Serial.println("Laser sensor initialization failed!");
     }
-
-    // Initialize water level sensor
-    waterSensor.begin();
 
     // Connect to WiFi
     setupWiFi();
@@ -226,6 +224,10 @@ void checkForErrors() {
         newErrors |= ERROR_MIX_TIME_EXCEEDED;
     }
 
+    if (!waterSensor.isReliable()) {
+        newErrors |= ERROR_WATER_SENSOR_FAILURE;
+    }
+
     currentErrors = newErrors;
 }
 
@@ -286,6 +288,9 @@ void handleErrorState() {
     }
     if (currentErrors & ERROR_MIX_TIME_EXCEEDED) {
         printLCD("Mix Time Exceeded");
+    }
+    if (currentErrors & ERROR_WATER_SENSOR_FAILURE) {
+        printLCD ("Water Sensor Fail");
     }
 
     // Re-check error conditions
