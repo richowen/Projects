@@ -7,7 +7,7 @@
 #include <PubSubClient.h>
 #include <WiFi.h>
 
-#define MQTT_SERVER "homeassistant.local"
+#define MQTT_SERVER "192.168.1.3"
 #define MQTT_PORT 1883
 #define MQTT_USERNAME "richowen"
 #define MQTT_PASSWORD "p"

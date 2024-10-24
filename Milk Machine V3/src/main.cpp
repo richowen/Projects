@@ -6,6 +6,7 @@
 #include "home_assistant.h"
 #include "laser_sensor.h"
 #include "water_level_sensor.h"
+#include "debug_utils.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
@@ -38,10 +39,6 @@ WaterLevelSensor waterSensor;    // Water level sensor object
 
 // Web Server
 WebServer server(80);  // Initialize WebServer
-
-// Telnet Server
-WiFiServer telnetServer(23);
-WiFiClient telnetClient;
 
 // Function declarations
 void setupPins();
@@ -107,12 +104,12 @@ void setup() {
         Serial.println("mDNS responder started");
     }
 
-    // Initialize ElegantOTA
-    ElegantOTA.begin(&server);
-
     // Start the web server
     server.begin();
     Serial.println("HTTP server and ElegantOTA started");
+
+     // Initialize ElegantOTA
+    ElegantOTA.begin(&server);
 
     // Setup Home Assistant integration
     setupHomeAssistant();
@@ -136,6 +133,7 @@ void setup() {
 }
 
 void loop() {
+
     // Check for wash mode changes
     State washMode = readWashMode();
     if ((washMode == WASH_STANDBY || washMode == WASH_DISPENSE) && washMode != currentState) {
@@ -187,35 +185,6 @@ void loop() {
 
     // Handle Telnet communication
     handleTelnet();
-}
-
-// ----------------- Telnet Setup -----------------
-
-void handleTelnet() {
-    // Check if a new client has connected
-    if (telnetServer.hasClient()) {
-        if (!telnetClient || !telnetClient.connected()) {
-            if (telnetClient) telnetClient.stop();  // Disconnect old client
-            telnetClient = telnetServer.available();  // Accept new client
-            Serial.println("New Telnet client connected");
-        }
-    }
-
-    // Check if the client is still connected
-    if (telnetClient && telnetClient.connected()) {
-        while (telnetClient.available()) {
-            char ch = telnetClient.read();
-            Serial.write(ch);  // Echo data received from the client
-        }
-    }
-
-    // Send serial output to Telnet client
-    if (telnetClient && telnetClient.connected()) {
-        if (Serial.available()) {
-            char ch = Serial.read();
-            telnetClient.write(ch);  // Forward serial data to Telnet client
-        }
-    }
 }
 
 // ----------------- State Management -----------------
@@ -362,25 +331,41 @@ void handleErrorState() {
 // ----------------- Debug Information -----------------
 
 void printDebugInfo() {
-    Serial.println("\n=== System Status ===");
-    Serial.printf("Current State: %s (for %ld seconds)\n", 
-                 getStateString(currentState), 
-                 (millis() - stateStartTime) / 1000);
-    Serial.printf("Water Level: %d%% (Reliable: %s)\n", 
-                 waterSensor.getLevel(), 
-                 waterSensor.isReliable() ? "Yes" : "No");
-    Serial.printf("Hopper Level: %d%%\n", hopperLevel);
-    Serial.printf("Error Status: 0x%02X\n", currentErrors);
+    debugPrintln("\n=== System Status ===");
     
-    // Pin states
-    Serial.println("\nPin States:");
-    Serial.printf("Mixer: %s\n", digitalRead(mixerPin) == LOW ? "ON" : "OFF");
-    Serial.printf("Water: %s\n", digitalRead(waterPin) == LOW ? "ON" : "OFF");
-    Serial.printf("Auger: %s\n", digitalRead(augerPin) == LOW ? "ON" : "OFF");
-    Serial.printf("Agitator: %s\n", digitalRead(agitatorPin) == LOW ? "ON" : "OFF");
-    Serial.printf("Wash Standby: %s\n", digitalRead(washStandbyPin) == LOW ? "YES" : "NO");
-    Serial.printf("Wash Dispense: %s\n", digitalRead(washDispensePin) == LOW ? "YES" : "NO");
-    Serial.println("==================\n");
+    char buffer[100];
+    
+    snprintf(buffer, sizeof(buffer), "Current State: %s (for %ld seconds)", 
+             getStateString(currentState), 
+             (millis() - stateStartTime) / 1000);
+    debugPrintln(buffer);
+    
+    snprintf(buffer, sizeof(buffer), "Water Level: %d%% (Reliable: %s)", 
+             waterSensor.getLevel(), 
+             waterSensor.isReliable() ? "Yes" : "No");
+    debugPrintln(buffer);
+    
+    snprintf(buffer, sizeof(buffer), "Hopper Level: %d%%", hopperLevel);
+    debugPrintln(buffer);
+    
+    snprintf(buffer, sizeof(buffer), "Error Status: 0x%02X", currentErrors);
+    debugPrintln(buffer);
+    
+    debugPrintln("\nPin States:");
+    snprintf(buffer, sizeof(buffer), "Mixer: %s", digitalRead(mixerPin) == LOW ? "ON" : "OFF");
+    debugPrintln(buffer);
+    snprintf(buffer, sizeof(buffer), "Water: %s", digitalRead(waterPin) == LOW ? "ON" : "OFF");
+    debugPrintln(buffer);
+    snprintf(buffer, sizeof(buffer), "Auger: %s", digitalRead(augerPin) == LOW ? "ON" : "OFF");
+    debugPrintln(buffer);
+    snprintf(buffer, sizeof(buffer), "Agitator: %s", digitalRead(agitatorPin) == LOW ? "ON" : "OFF");
+    debugPrintln(buffer);
+    snprintf(buffer, sizeof(buffer), "Wash Standby: %s", digitalRead(washStandbyPin) == LOW ? "YES" : "NO");
+    debugPrintln(buffer);
+    snprintf(buffer, sizeof(buffer), "Wash Dispense: %s", digitalRead(washDispensePin) == LOW ? "YES" : "NO");
+    debugPrintln(buffer);
+    
+    debugPrintln("==================\n");
 }
 
 // ----------------- Pin Setup -----------------

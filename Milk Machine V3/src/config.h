@@ -40,7 +40,6 @@ extern const unsigned long LCD_UPDATE_INTERVAL;
 extern unsigned long lastStableTime; 
 extern int lastStableReading;
 
-
 // Updated State enum
 enum State {
   IDLE,
