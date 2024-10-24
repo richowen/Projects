@@ -150,6 +150,8 @@ void loop() {
         lastLCDUpdate = millis();
     }
 
+    ElegantOTA.loop();
+
     // Handle Home Assistant tasks
     loopHomeAssistant();
 
