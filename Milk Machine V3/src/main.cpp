@@ -12,11 +12,16 @@
 #include <WiFiClient.h>  // For Telnet
 #include <ESPmDNS.h>     // For mDNS service
 
+// ----------------- Global Variables -----------------
+
 // State function pointer
 typedef void (*StateHandler)();
 StateHandler currentStateHandler = nullptr;
 
-// Global variables
+// Error flags
+const uint8_t ERROR_HOPPER_LOW = 0x01;
+const uint8_t ERROR_MIX_TIME_EXCEEDED = 0x02;
+
 State currentState = IDLE;
 unsigned long stateStartTime = 0;
 unsigned long lastLCDUpdate = 0;
@@ -24,10 +29,10 @@ unsigned long lastSensorUpdate = 0;
 int hopperLevel = 0;
 bool sensorActivatedDuringPostMix = false;
 uint8_t currentErrors = 0;
-const uint8_t ERROR_HOPPER_LOW = 0x01;
-const uint8_t ERROR_MIX_TIME_EXCEEDED = 0x02;
-LaserSensor laserSensor;  // Laser sensor object
-WaterLevelSensor waterSensor;
+
+// Sensor objects
+LaserSensor laserSensor;         // Laser sensor object
+WaterLevelSensor waterSensor;    // Water level sensor object
 
 // Web Server
 WebServer server(80);  // Initialize WebServer
@@ -36,22 +41,13 @@ WebServer server(80);  // Initialize WebServer
 WiFiServer telnetServer(23);
 WiFiClient telnetClient;
 
-// Error queue
-#define MAX_ERRORS 5
-uint8_t errorQueue[MAX_ERRORS];
-int errorQueueStart = 0;
-int errorQueueEnd = 0;
-
 // Function declarations
 void setupPins();
 void updateSensors();
 void handleErrors();
-bool checkForErrors();
+void checkForErrors();
 void transitionTo(State newState, StateHandler newStateHandler);
 void executeCurrentState();
-void enqueueError(uint8_t error);
-uint8_t dequeueError();
-bool isErrorQueueEmpty();
 void handleIdleState();
 void handleMixingState();
 void handleWaitingPostMixState();
@@ -78,8 +74,11 @@ void setup() {
         Serial.println("Laser sensor initialization failed!");
     }
 
+    // Initialize water level sensor
     waterSensor.begin();
-    setupWiFi();  // Ensure this function connects to your WiFi network
+
+    // Connect to WiFi
+    setupWiFi();
 
     // Wait for WiFi connection before proceeding
     while (WiFi.status() != WL_CONNECTED) {
@@ -104,9 +103,12 @@ void setup() {
     server.begin();
     Serial.println("HTTP server and ElegantOTA started");
 
+    // Setup Home Assistant integration
     setupHomeAssistant();
-    telnetServer.begin();  // Initialize Telnet server
-    telnetServer.setNoDelay(true);  // Disable buffering for Telnet
+
+    // Initialize Telnet server
+    telnetServer.begin();
+    telnetServer.setNoDelay(true);
 
     // Initial state
     transitionTo(IDLE, handleIdleState);
@@ -150,14 +152,15 @@ void loop() {
         lastLCDUpdate = millis();
     }
 
+    // Handle Home Assistant tasks
     loopHomeAssistant();
 
     // Handle web server requests and ElegantOTA updates
     server.handleClient();
 
-    handleTelnet();  // Handle Telnet communication
+    // Handle Telnet communication
+    handleTelnet();
 }
-
 
 // ----------------- Telnet Setup -----------------
 
@@ -200,7 +203,7 @@ void transitionTo(State newState, StateHandler newStateHandler) {
     currentState = newState;
     currentStateHandler = newStateHandler;
     stateStartTime = millis();
-    DEBUG_PRINTF("Transitioning to state: %s\n", getStateString(newState));
+    Serial.printf("Transitioning to state: %s\n", getStateString(newState));
     updateLCD(currentState, hopperLevel);
     updateDevices(newState);  // Ensure devices are updated on state change
 }
@@ -212,47 +215,26 @@ void updateSensors() {
     waterSensor.update();
 }
 
-void handleErrors() {
-    if (!checkForErrors()) {
-        return;
-    }
-
-    // Process the first error in the queue
-    if (!isErrorQueueEmpty()) {
-        currentErrors = dequeueError();
-        transitionTo(ERROR, handleErrorState);
-    }
-}
-
-bool checkForErrors() {
+void checkForErrors() {
     uint8_t newErrors = 0;
 
     if (laserSensor.isHopperLow()) {
-        enqueueError(ERROR_HOPPER_LOW);
         newErrors |= ERROR_HOPPER_LOW;
     }
 
     if (currentState == MIXING && (millis() - stateStartTime >= maxMixingDuration)) {
-        enqueueError(ERROR_MIX_TIME_EXCEEDED);
         newErrors |= ERROR_MIX_TIME_EXCEEDED;
     }
 
-    return newErrors != 0;
+    currentErrors = newErrors;
 }
 
-void enqueueError(uint8_t error) {
-    errorQueue[errorQueueEnd] = error;
-    errorQueueEnd = (errorQueueEnd + 1) % MAX_ERRORS;
-}
+void handleErrors() {
+    checkForErrors();
 
-uint8_t dequeueError() {
-    uint8_t error = errorQueue[errorQueueStart];
-    errorQueueStart = (errorQueueStart + 1) % MAX_ERRORS;
-    return error;
-}
-
-bool isErrorQueueEmpty() {
-    return errorQueueStart == errorQueueEnd;
+    if (currentErrors != 0 && currentState != ERROR) {
+        transitionTo(ERROR, handleErrorState);
+    }
 }
 
 // ----------------- State Handlers -----------------
@@ -260,8 +242,6 @@ bool isErrorQueueEmpty() {
 void handleIdleState() {
     if (waterSensor.isReliable() && waterSensor.getLevel() < 10 && !laserSensor.isHopperLow()) {
         transitionTo(MIXING, handleMixingState);
-    } else if (laserSensor.isHopperLow()) {
-        enqueueError(ERROR_HOPPER_LOW);
     }
 }
 
@@ -269,8 +249,6 @@ void handleMixingState() {
     if (waterSensor.getLevel() > 90) {
         sensorActivatedDuringPostMix = false;
         transitionTo(WAITING_POST_MIX, handleWaitingPostMixState);
-    } else if (laserSensor.isHopperLow()) {
-        enqueueError(ERROR_HOPPER_LOW);
     }
 }
 
@@ -289,17 +267,13 @@ void handleWaitingPostMixState() {
 }
 
 void handleWashStandbyState() {
-    digitalWrite(mixerPin, HIGH);
-    digitalWrite(waterPin, HIGH);
-    digitalWrite(augerPin, HIGH);
-    digitalWrite(agitatorPin, HIGH);
+    // Devices are already set in updateDevices()
+    // You can add additional logic here if needed
 }
 
 void handleWashDispenseState() {
-    digitalWrite(mixerPin, HIGH);
-    digitalWrite(waterPin, LOW);  // Water on
-    digitalWrite(augerPin, HIGH);
-    digitalWrite(agitatorPin, HIGH);
+    // Devices are already set in updateDevices()
+    // You can add additional logic here if needed
 }
 
 void handleErrorState() {
@@ -314,9 +288,11 @@ void handleErrorState() {
         printLCD("Mix Time Exceeded");
     }
 
-    // Check if the error can be cleared
-    if (isErrorQueueEmpty()) {
-        currentErrors = 0;
+    // Re-check error conditions
+    checkForErrors();
+
+    if (currentErrors == 0) {
+        // All errors resolved
         transitionTo(IDLE, handleIdleState);
     }
 }
@@ -343,7 +319,6 @@ void updateDevices(State state) {
     switch (state) {
         case IDLE:
         case ERROR:
-        case WASH_STANDBY:
             digitalWrite(mixerPin, HIGH);
             digitalWrite(waterPin, HIGH);
             digitalWrite(augerPin, HIGH);
@@ -361,6 +336,12 @@ void updateDevices(State state) {
             digitalWrite(augerPin, HIGH);
             digitalWrite(agitatorPin, HIGH);
             break;
+        case WASH_STANDBY:
+            digitalWrite(mixerPin, HIGH);
+            digitalWrite(waterPin, HIGH);
+            digitalWrite(augerPin, HIGH);
+            digitalWrite(agitatorPin, HIGH);
+            break;
         case WASH_DISPENSE:
             digitalWrite(mixerPin, HIGH);
             digitalWrite(waterPin, LOW);  // Water on
@@ -370,9 +351,11 @@ void updateDevices(State state) {
     }
 }
 
+// ----------------- Wash Mode Reading -----------------
+
 State readWashMode() {
-    bool standbyActive = digitalRead(washStandbyPin) == LOW;
-    bool dispenseActive = digitalRead(washDispensePin) == LOW;
+    bool standbyActive = digitalRead(washStandbyPin) == LOW;   // Active LOW
+    bool dispenseActive = digitalRead(washDispensePin) == LOW; // Active LOW
 
     if (standbyActive && dispenseActive) {
         return WASH_DISPENSE;
@@ -380,4 +363,18 @@ State readWashMode() {
         return WASH_STANDBY;
     }
     return IDLE;
+}
+
+// ----------------- Utility Functions -----------------
+
+const char* getStateString(State state) {
+    switch (state) {
+        case IDLE: return "IDLE";
+        case MIXING: return "MIXING";
+        case WAITING_POST_MIX: return "WAITING_POST_MIX";
+        case WASH_STANDBY: return "WASH_STANDBY";
+        case WASH_DISPENSE: return "WASH_DISPENSE";
+        case ERROR: return "ERROR";
+        default: return "UNKNOWN";
+    }
 }
