@@ -1,167 +1,109 @@
+// water_level_sensor.cpp
 #include "water_level_sensor.h"
 
-WaterLevelSensor::WaterLevelSensor() : _readIndex(0), _readCount(0), _currentLevel(0), _errorCount(0), _lastReadTime(0) {
-    memset(_lowData, 0, sizeof(_lowData));
-    memset(_highData, 0, sizeof(_highData));
-}
-
 void WaterLevelSensor::begin() {
-    Wire.begin();  // Initialize I2C
-    Wire.setClock(100000);  // Set to 100kHz for more reliable communication
+    Wire.begin();
+    Wire.setClock(100000);  // 100kHz for stability
+}
+
+void WaterLevelSensor::getHigh12SectionValue() {
+    memset(_highData, 0, sizeof(_highData));
+    Wire.requestFrom(ATTINY1_HIGH_ADDR, 12);
     
-    // Test communication with both ATtiny chips
-    Wire.beginTransmission(ATTINY1_HIGH_ADDR);
-    bool highSectionOk = (Wire.endTransmission() == 0);
+    while (12 != Wire.available());
     
-    Wire.beginTransmission(ATTINY2_LOW_ADDR);
-    bool lowSectionOk = (Wire.endTransmission() == 0);
-    
-    if (!highSectionOk || !lowSectionOk) {
-        Serial.println("WARNING: Water sensor initialization issue!");
-        if (!highSectionOk) Serial.println("- High section not responding");
-        if (!lowSectionOk) Serial.println("- Low section not responding");
-    }
-}
-
-bool WaterLevelSensor::update() {
-    if (millis() - _lastReadTime < READ_INTERVAL) {
-        return true;
-    }
-
-    bool success = true;
-    success &= getLowSectionValue();
-    success &= getHighSectionValue();
-
-    if (success) {
-        uint8_t newLevel = calculateWaterLevelSequential();
-        
-        // Implement simple spike filter
-        if (_readCount > 0 && abs(newLevel - _currentLevel) > 20) {
-            Serial.printf("Large level change detected: %d -> %d\n", _currentLevel, newLevel);
-        }
-        
-        _readings[_readIndex] = newLevel;
-        _readIndex = (_readIndex + 1) % MIN_RELIABLE_READING;
-
-        if (++_readCount >= MIN_RELIABLE_READING) {
-            uint16_t sum = 0;
-            for (int i = 0; i < MIN_RELIABLE_READING; i++) {
-                sum += _readings[i];
-            }
-            _currentLevel = sum / MIN_RELIABLE_READING;
-        }
-
-        _lastReadTime = millis();
-        _errorCount = 0;
-    } else {
-        _errorCount++;
-        if (_errorCount >= MAX_ERRORS) {
-            Serial.println("WARNING: Water sensor read errors exceeded threshold");
-        }
-    }
-
-    return success;
-}
-
-uint8_t WaterLevelSensor::getLevel() const {
-    return _currentLevel;
-}
-
-bool WaterLevelSensor::isReliable() const {
-    return _errorCount < MAX_ERRORS && _readCount >= MIN_RELIABLE_READING;
-}
-
-bool WaterLevelSensor::getLowSectionValue() {
-    Wire.requestFrom(ATTINY2_LOW_ADDR, (uint8_t)8, (uint8_t)true);  // Request 8 bytes from low section
-    if (Wire.available() != 8) {
-        return false;
-    }
-    for (int i = 0; i < 8; i++) {
-        _lowData[i] = Wire.read();
-    }
-    return true;
-}
-
-bool WaterLevelSensor::getHighSectionValue() {
-    Wire.requestFrom(ATTINY1_HIGH_ADDR, (uint8_t)12, (uint8_t)true);  // Request 12 bytes from high section
-    if (Wire.available() != 12) {
-        return false;
-    }
     for (int i = 0; i < 12; i++) {
         _highData[i] = Wire.read();
     }
-    return true;
+    delay(10);
 }
 
-uint8_t WaterLevelSensor::calculateWaterLevelSequential() {
-    bool states[20];
-    memset(states, 0, sizeof(states));
-
-    // Check wet/dry states for low and high sections
+void WaterLevelSensor::getLow8SectionValue() {
+    memset(_lowData, 0, sizeof(_lowData));
+    Wire.requestFrom(ATTINY2_LOW_ADDR, 8);
+    
+    while (8 != Wire.available());
+    
     for (int i = 0; i < 8; i++) {
-        states[i] = _lowData[i] > THRESHOLD;
+        _lowData[i] = Wire.read();
     }
-    for (int i = 0; i < 12; i++) {
-        states[i + 8] = _highData[i] > THRESHOLD;
-    }
-
-    int wetCount = 0;
-    for (int i = 0; i < 20; i++) {
-        if (!states[i]) break;  // Stop counting at the first dry pad
-        wetCount++;
-    }
-
-    return wetCount * 5;  // Each pad represents 5%
+    delay(10);
 }
 
-bool WaterLevelSensor::isSequentialReading() {
-    bool foundGap = false;
-    bool states[20];
-    memset(states, 0, sizeof(states));
-
-    // Combine low and high section wet/dry states
+void WaterLevelSensor::update() {
+    uint32_t touch_val = 0;
+    uint8_t trig_section = 0;
+    
+    getLow8SectionValue();
+    getHigh12SectionValue();
+    
+    // Process low section data
     for (int i = 0; i < 8; i++) {
-        states[i] = _lowData[i] > THRESHOLD;
-    }
-    for (int i = 0; i < 12; i++) {
-        states[i + 8] = _highData[i] > THRESHOLD;
-    }
-
-    // Look for gaps between wet pads
-    bool foundDry = false;
-    for (int i = 0; i < 20; i++) {
-        if (!states[i]) {
-            foundDry = true;
-        } else if (foundDry) {
-            return false;  // Wet pad found after a dry one
+        if (_lowData[i] > THRESHOLD) {
+            touch_val |= 1 << i;
         }
     }
-
-    return true;
+    
+    // Process high section data
+    for (int i = 0; i < 12; i++) {
+        if (_highData[i] > THRESHOLD) {
+            touch_val |= (uint32_t)1 << (8 + i);
+        }
+    }
+    
+    // Calculate water level
+    while (touch_val & 0x01) {
+        trig_section++;
+        touch_val >>= 1;
+    }
+    
+    _waterLevel = trig_section * 5;
+    
+    // Basic reliability check - ensure readings are sequential
+    bool foundDry = false;
+    _isReliable = true;
+    
+    for (int i = 0; i < 8; i++) {
+        if (_lowData[i] <= THRESHOLD) foundDry = true;
+        else if (foundDry) {
+            _isReliable = false;
+            break;
+        }
+    }
+    
+    if (_isReliable) {
+        for (int i = 0; i < 12; i++) {
+            if (_highData[i] <= THRESHOLD) foundDry = true;
+            else if (foundDry) {
+                _isReliable = false;
+                break;
+            }
+        }
+    }
 }
 
 void WaterLevelSensor::printDebug() {
-    Serial.println(F("Water sensor states (bottom to top):"));
-    bool states[20];
+    Serial.println("Water Sensor Debug:");
+    
+    Serial.println("Low section values:");
     for (int i = 0; i < 8; i++) {
-        states[i] = _lowData[i] > THRESHOLD;
+        Serial.print(_lowData[i]);
+        Serial.print(" ");
     }
+    Serial.println();
+    
+    Serial.println("High section values:");
     for (int i = 0; i < 12; i++) {
-        states[i + 8] = _highData[i] > THRESHOLD;
+        Serial.print(_highData[i]);
+        Serial.print(" ");
     }
-
-    for (int i = 0; i < 20; i++) {
-        Serial.print(i);
-        Serial.print(": ");
-        Serial.print(states[i] ? "WET" : "DRY");
-        Serial.print(" (");
-        Serial.print(i < 8 ? _lowData[i] : _highData[i-8]);
-        Serial.println(")");
-    }
-    Serial.print(F("Calculated water level: "));
-    Serial.print(_currentLevel);
-    Serial.println(F("%"));
-    if (!isSequentialReading()) {
-        Serial.println(F("WARNING: Non-sequential reading detected!"));
-    }
+    Serial.println();
+    
+    Serial.print("Water Level: ");
+    Serial.print(_waterLevel);
+    Serial.println("%");
+    
+    Serial.print("Reliable: ");
+    Serial.println(_isReliable ? "Yes" : "No");
+    Serial.println();
 }

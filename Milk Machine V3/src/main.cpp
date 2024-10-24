@@ -216,9 +216,11 @@ void updateSensors() {
     }
 
     // Update water level sensor
-    bool waterUpdateSuccess = waterSensor.update();
-    if (!waterUpdateSuccess) {
-        Serial.println("WARNING: Water sensor update failed!");
+    waterSensor.update();  // Just call update - it handles everything internally now
+    
+    // You can check reliability after update if needed
+    if (!waterSensor.isReliable()) {
+        Serial.println("WARNING: Water sensor reading not reliable!");
     }
 
     // Update Home Assistant with new values
