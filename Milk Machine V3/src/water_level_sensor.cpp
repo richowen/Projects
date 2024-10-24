@@ -5,10 +5,26 @@ WaterLevelSensor::WaterLevelSensor() : _readIndex(0), _readCount(0), _currentLev
     memset(_highData, 0, sizeof(_highData));
 }
 
+void WaterLevelSensor::begin() {
+    Wire.begin();  // Initialize I2C
+    
+    // Test communication with both ATtiny chips
+    Wire.beginTransmission(ATTINY1_HIGH_ADDR);
+    bool highSectionOk = (Wire.endTransmission() == 0);
+    
+    Wire.beginTransmission(ATTINY2_LOW_ADDR);
+    bool lowSectionOk = (Wire.endTransmission() == 0);
+    
+    if (!highSectionOk || !lowSectionOk) {
+        Serial.println("WARNING: Water sensor initialization issue!");
+        if (!highSectionOk) Serial.println("- High section not responding");
+        if (!lowSectionOk) Serial.println("- Low section not responding");
+    }
+}
+
 bool WaterLevelSensor::update() {
-    // Only update if the interval has passed
     if (millis() - _lastReadTime < READ_INTERVAL) {
-        return true; // Don't need to update yet
+        return true;
     }
 
     bool success = true;
@@ -17,6 +33,12 @@ bool WaterLevelSensor::update() {
 
     if (success) {
         uint8_t newLevel = calculateWaterLevelSequential();
+        
+        // Implement simple spike filter
+        if (_readCount > 0 && abs(newLevel - _currentLevel) > 20) {
+            Serial.printf("Large level change detected: %d -> %d\n", _currentLevel, newLevel);
+        }
+        
         _readings[_readIndex] = newLevel;
         _readIndex = (_readIndex + 1) % MIN_RELIABLE_READING;
 
@@ -25,13 +47,16 @@ bool WaterLevelSensor::update() {
             for (int i = 0; i < MIN_RELIABLE_READING; i++) {
                 sum += _readings[i];
             }
-            _currentLevel = sum / MIN_RELIABLE_READING;  // Average readings
+            _currentLevel = sum / MIN_RELIABLE_READING;
         }
 
         _lastReadTime = millis();
         _errorCount = 0;
     } else {
         _errorCount++;
+        if (_errorCount >= MAX_ERRORS) {
+            Serial.println("WARNING: Water sensor read errors exceeded threshold");
+        }
     }
 
     return success;

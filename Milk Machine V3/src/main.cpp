@@ -9,8 +9,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
-#include <WiFiClient.h>  // For Telnet
-#include <ESPmDNS.h>     // For mDNS service
+#include <WiFiClient.h>
+#include <ESPmDNS.h>
 
 // ----------------- Global Variables -----------------
 
@@ -27,6 +27,7 @@ State currentState = IDLE;
 unsigned long stateStartTime = 0;
 unsigned long lastLCDUpdate = 0;
 unsigned long lastSensorUpdate = 0;
+unsigned long lastDebugOutput = 0;  // New: For periodic debug output
 int hopperLevel = 0;
 bool sensorActivatedDuringPostMix = false;
 uint8_t currentErrors = 0;
@@ -59,6 +60,7 @@ State readWashMode();
 void updateDevices(State state);
 const char* getStateString(State state);
 void handleTelnet();
+void printDebugInfo();  // New: Debug information function
 
 // ----------------- Setup and Loop -----------------
 
@@ -67,13 +69,24 @@ void setup() {
     Wire.begin();
     delay(100);  // Allow I2C to stabilize
 
+    Serial.println("\nInitializing Milk Mixer System...");
+
     setupPins();
+    Serial.println("Pins initialized");
+    
     setupLCD();
+    Serial.println("LCD initialized");
 
     // Initialize laser sensor
     if (!laserSensor.begin()) {
-        Serial.println("Laser sensor initialization failed!");
+        Serial.println("ERROR: Laser sensor initialization failed!");
+    } else {
+        Serial.println("Laser sensor initialized successfully");
     }
+
+    // Initialize water sensor (New)
+    waterSensor.begin();
+    Serial.println("Water sensor initialized");
 
     // Connect to WiFi
     setupWiFi();
@@ -103,14 +116,22 @@ void setup() {
 
     // Setup Home Assistant integration
     setupHomeAssistant();
+    Serial.println("Home Assistant integration initialized");
 
     // Initialize Telnet server
     telnetServer.begin();
     telnetServer.setNoDelay(true);
+    Serial.println("Telnet server started");
 
     // Initial state
     transitionTo(IDLE, handleIdleState);
     displayMessage("System Ready");
+
+    // Initial sensor readings
+    updateSensors();
+    Serial.println("Initial water level: " + String(waterSensor.getLevel()) + "%");
+    Serial.println("Initial hopper level: " + String(hopperLevel) + "%");
+    
     delay(1000);
 }
 
@@ -135,6 +156,12 @@ void loop() {
         if (millis() - lastSensorUpdate >= 1000) {
             updateSensors();
             lastSensorUpdate = millis();
+        }
+
+        // Debug output every 5 seconds
+        if (millis() - lastDebugOutput >= 5000) {
+            printDebugInfo();
+            lastDebugOutput = millis();
         }
 
         // Process errors
@@ -200,19 +227,33 @@ void executeCurrentState() {
 }
 
 void transitionTo(State newState, StateHandler newStateHandler) {
+    Serial.printf("State transition: %s -> %s\n", getStateString(currentState), getStateString(newState));
     currentState = newState;
     currentStateHandler = newStateHandler;
     stateStartTime = millis();
-    Serial.printf("Transitioning to state: %s\n", getStateString(newState));
     updateLCD(currentState, hopperLevel);
-    updateDevices(newState);  // Ensure devices are updated on state change
+    updateDevices(newState);
+    updateHomeAssistant(getStateString(newState), hopperLevel);
 }
 
 // ----------------- Sensor and Error Management -----------------
 
 void updateSensors() {
+    // Update hopper level
+    int previousHopperLevel = hopperLevel;
     hopperLevel = laserSensor.readHopperLevel();
-    waterSensor.update();
+    if (abs(hopperLevel - previousHopperLevel) > 10) {
+        Serial.printf("Significant hopper level change: %d -> %d\n", previousHopperLevel, hopperLevel);
+    }
+
+    // Update water level sensor
+    bool waterUpdateSuccess = waterSensor.update();
+    if (!waterUpdateSuccess) {
+        Serial.println("WARNING: Water sensor update failed!");
+    }
+
+    // Update Home Assistant with new values
+    updateHomeAssistant(getStateString(currentState), hopperLevel);
 }
 
 void checkForErrors() {
@@ -220,14 +261,21 @@ void checkForErrors() {
 
     if (laserSensor.isHopperLow()) {
         newErrors |= ERROR_HOPPER_LOW;
+        Serial.println("Error: Hopper low detected");
     }
 
     if (currentState == MIXING && (millis() - stateStartTime >= maxMixingDuration)) {
         newErrors |= ERROR_MIX_TIME_EXCEEDED;
+        Serial.println("Error: Mix time exceeded");
     }
 
     if (!waterSensor.isReliable()) {
         newErrors |= ERROR_WATER_SENSOR_FAILURE;
+        Serial.println("Error: Water sensor failure");
+    }
+
+    if (newErrors != currentErrors) {
+        Serial.printf("Error status changed: 0x%02X -> 0x%02X\n", currentErrors, newErrors);
     }
 
     currentErrors = newErrors;
@@ -237,6 +285,7 @@ void handleErrors() {
     checkForErrors();
 
     if (currentErrors != 0 && currentState != ERROR) {
+        Serial.println("Errors detected, transitioning to ERROR state");
         transitionTo(ERROR, handleErrorState);
     }
 }
@@ -245,26 +294,35 @@ void handleErrors() {
 
 void handleIdleState() {
     if (waterSensor.isReliable() && waterSensor.getLevel() < 10 && !laserSensor.isHopperLow()) {
+        Serial.printf("Water level %d%% below threshold, transitioning to MIXING\n", waterSensor.getLevel());
         transitionTo(MIXING, handleMixingState);
     }
 }
 
 void handleMixingState() {
-    if (waterSensor.getLevel() > 90) {
+    int currentWaterLevel = waterSensor.getLevel();
+    
+    if (currentWaterLevel > 90) {
+        Serial.printf("Water level %d%% above threshold, transitioning to WAITING_POST_MIX\n", currentWaterLevel);
         sensorActivatedDuringPostMix = false;
         transitionTo(WAITING_POST_MIX, handleWaitingPostMixState);
     }
 }
 
 void handleWaitingPostMixState() {
-    if (waterSensor.getLevel() < 10) {
+    int currentWaterLevel = waterSensor.getLevel();
+    
+    if (currentWaterLevel < 10) {
+        Serial.println("Water level dropped during post-mix waiting period");
         sensorActivatedDuringPostMix = true;
     }
 
     if (millis() - stateStartTime >= waitingDuration) {
         if (sensorActivatedDuringPostMix) {
+            Serial.println("Post-mix wait complete - returning to MIXING due to sensor activation");
             transitionTo(MIXING, handleMixingState);
         } else {
+            Serial.println("Post-mix wait complete - returning to IDLE");
             transitionTo(IDLE, handleIdleState);
         }
     }
@@ -272,12 +330,10 @@ void handleWaitingPostMixState() {
 
 void handleWashStandbyState() {
     // Devices are already set in updateDevices()
-    // You can add additional logic here if needed
 }
 
 void handleWashDispenseState() {
     // Devices are already set in updateDevices()
-    // You can add additional logic here if needed
 }
 
 void handleErrorState() {
@@ -292,16 +348,39 @@ void handleErrorState() {
         printLCD("Mix Time Exceeded");
     }
     if (currentErrors & ERROR_WATER_SENSOR_FAILURE) {
-        printLCD ("Water Sensor Fail");
+        printLCD("Water Sensor Fail");
     }
 
-    // Re-check error conditions
     checkForErrors();
 
     if (currentErrors == 0) {
-        // All errors resolved
+        Serial.println("Errors cleared, returning to IDLE");
         transitionTo(IDLE, handleIdleState);
     }
+}
+
+// ----------------- Debug Information -----------------
+
+void printDebugInfo() {
+    Serial.println("\n=== System Status ===");
+    Serial.printf("Current State: %s (for %ld seconds)\n", 
+                 getStateString(currentState), 
+                 (millis() - stateStartTime) / 1000);
+    Serial.printf("Water Level: %d%% (Reliable: %s)\n", 
+                 waterSensor.getLevel(), 
+                 waterSensor.isReliable() ? "Yes" : "No");
+    Serial.printf("Hopper Level: %d%%\n", hopperLevel);
+    Serial.printf("Error Status: 0x%02X\n", currentErrors);
+    
+    // Pin states
+    Serial.println("\nPin States:");
+    Serial.printf("Mixer: %s\n", digitalRead(mixerPin) == LOW ? "ON" : "OFF");
+    Serial.printf("Water: %s\n", digitalRead(waterPin) == LOW ? "ON" : "OFF");
+    Serial.printf("Auger: %s\n", digitalRead(augerPin) == LOW ? "ON" : "OFF");
+    Serial.printf("Agitator: %s\n", digitalRead(agitatorPin) == LOW ? "ON" : "OFF");
+    Serial.printf("Wash Standby: %s\n", digitalRead(washStandbyPin) == LOW ? "YES" : "NO");
+    Serial.printf("Wash Dispense: %s\n", digitalRead(washDispensePin) == LOW ? "YES" : "NO");
+    Serial.println("==================\n");
 }
 
 // ----------------- Pin Setup -----------------
@@ -313,11 +392,15 @@ void setupPins() {
     pinMode(agitatorPin, OUTPUT);
     pinMode(washStandbyPin, INPUT_PULLUP);
     pinMode(washDispensePin, INPUT_PULLUP);
+    pinMode(resetSwitchPin, INPUT_PULLUP);
 
-    digitalWrite(mixerPin, HIGH);
-    digitalWrite(waterPin, HIGH);
-    digitalWrite(augerPin, HIGH);
-    digitalWrite(agitatorPin, HIGH);
+    // Set initial pin states
+    digitalWrite(mixerPin, HIGH);    // Active LOW
+    digitalWrite(waterPin, HIGH);    // Active LOW
+    digitalWrite(augerPin, HIGH);    // Active LOW
+    digitalWrite(agitatorPin, HIGH); // Active LOW
+    
+    Serial.println("Pins initialized to safe state");
 }
 
 // ----------------- Update Devices Based on State -----------------
