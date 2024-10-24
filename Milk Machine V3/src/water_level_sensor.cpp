@@ -7,6 +7,7 @@ WaterLevelSensor::WaterLevelSensor() : _readIndex(0), _readCount(0), _currentLev
 
 void WaterLevelSensor::begin() {
     Wire.begin();  // Initialize I2C
+    Wire.setClock(100000);  // Set to 100kHz for more reliable communication
     
     // Test communication with both ATtiny chips
     Wire.beginTransmission(ATTINY1_HIGH_ADDR);
