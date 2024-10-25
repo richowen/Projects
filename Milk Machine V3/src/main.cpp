@@ -7,6 +7,7 @@
 #include "laser_sensor.h"
 #include "water_level_sensor.h"
 #include "debug_utils.h"
+#include "error_handler.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
 
@@ -32,12 +33,11 @@ uint8_t currentErrors = 0;
 
 // Sensor objects
 LaserSensor laserSensor;         // Laser sensor object
-WaterLevelSensor waterSensor;    // Water level sensor object
+WaterLevelSensor waterSensor(waterBottomPin, waterTopPin);    // Water level sensor object
 
 // Function declarations
 void setupPins();
 void updateSensors();
-void handleErrors();
 void checkForErrors();
 void transitionTo(State newState, StateHandler newStateHandler);
 void executeCurrentState();
@@ -51,7 +51,7 @@ State readWashMode();
 void updateDevices(State state);
 const char* getStateString(State state);
 void handleTelnet();
-void printDebugInfo();  // New: Debug information function
+void printDebugInfo();
 
 // ----------------- Setup and Loop -----------------
 
@@ -104,26 +104,25 @@ void setup() {
 
     // Initial sensor readings
     updateSensors();
-    Serial.println("Initial water level: " + String(waterSensor.getLevel()) + "%");
+    Serial.println("Initial water level: " + String(waterSensor.getLevel()));
     Serial.println("Initial hopper level: " + String(hopperLevel) + "%");
+
+    errorHandler = new ErrorHandler(laserSensor, waterSensor);
+    errorHandler->begin();
     
     delay(1000);
 }
 
-
 void loop() {
-
     // Check for wash mode changes
     State washMode = readWashMode();
     if ((washMode == WASH_STANDBY || washMode == WASH_DISPENSE) && washMode != currentState) {
-        // Transition to wash mode states
         if (washMode == WASH_STANDBY) {
             transitionTo(WASH_STANDBY, handleWashStandbyState);
         } else if (washMode == WASH_DISPENSE) {
             transitionTo(WASH_DISPENSE, handleWashDispenseState);
         }
     } else if ((currentState == WASH_STANDBY || currentState == WASH_DISPENSE) && washMode == IDLE) {
-        // Transition back to IDLE when wash mode is deactivated
         transitionTo(IDLE, handleIdleState);
     }
 
@@ -135,23 +134,33 @@ void loop() {
             lastSensorUpdate = millis();
         }
 
-        // Debug output every 5 seconds
-        if (millis() - lastDebugOutput >= 5000) {
-            printDebugInfo();
-            lastDebugOutput = millis();
+        // Handle errors
+        errorHandler->handle(currentState);
+        
+        // Check if we need to enter error state
+        if (errorHandler->requiresErrorState()) {
+            transitionTo(ERROR, handleErrorState);
         }
-
-        // Process errors
-        handleErrors();
-
-        // Execute current state
-        executeCurrentState();
+        // Check if we can exit error state
+        else if (errorHandler->canExitErrorState()) {
+            transitionTo(IDLE, handleIdleState);
+        }
+        // Normal state execution
+        else if (!errorHandler->hasErrors() || currentState != ERROR) {
+            executeCurrentState();
+        }
     }
 
     // Periodically update the LCD
     if (millis() - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
         updateLCD(currentState, hopperLevel);
         lastLCDUpdate = millis();
+    }
+
+        // Periodic debug status update
+    if (millis() - lastDebugUpdate >= DEBUG_UPDATE_INTERVAL) {
+        printSystemStatus();
+        lastDebugUpdate = millis();
     }
 
     // Handle Home Assistant tasks
@@ -170,7 +179,20 @@ void executeCurrentState() {
 }
 
 void transitionTo(State newState, StateHandler newStateHandler) {
+    // Prevent transitioning to the same state
+    if (currentState == newState) {
+        return;
+    }
+
     Serial.printf("State transition: %s -> %s\n", getStateString(currentState), getStateString(newState));
+    
+    // Update error handler's state tracking
+    if (newState == ERROR) {
+        errorHandler->setInErrorState(true);
+    } else {
+        errorHandler->setInErrorState(false);
+    }
+    
     currentState = newState;
     currentStateHandler = newStateHandler;
     stateStartTime = millis();
@@ -189,68 +211,37 @@ void updateSensors() {
         Serial.printf("Significant hopper level change: %d -> %d\n", previousHopperLevel, hopperLevel);
     }
 
-    // Update water level sensor
-    bool waterUpdateSuccess = waterSensor.update();
-    if (!waterUpdateSuccess) {
-        Serial.println("WARNING: Water sensor update failed!");
-    }
+    // Update water level sensor and handle its states
+    WaterLevelSensor::Level waterLevel = waterSensor.update();
 
-    // Update Home Assistant with new values
     updateHomeAssistant(getStateString(currentState), hopperLevel);
-}
-
-void checkForErrors() {
-    uint8_t newErrors = 0;
-
-    if (laserSensor.isHopperLow()) {
-        newErrors |= ERROR_HOPPER_LOW;
-        Serial.println("Error: Hopper low detected");
     }
-
-    if (currentState == MIXING && (millis() - stateStartTime >= maxMixingDuration)) {
-        newErrors |= ERROR_MIX_TIME_EXCEEDED;
-        Serial.println("Error: Mix time exceeded");
-    }
-
-    if (newErrors != currentErrors) {
-        Serial.printf("Error status changed: 0x%02X -> 0x%02X\n", currentErrors, newErrors);
-    }
-
-    currentErrors = newErrors;
-}
-
-void handleErrors() {
-    checkForErrors();
-
-    if (currentErrors != 0 && currentState != ERROR) {
-        Serial.println("Errors detected, transitioning to ERROR state");
-        transitionTo(ERROR, handleErrorState);
-    }
-}
 
 // ----------------- State Handlers -----------------
 
 void handleIdleState() {
-    if (waterSensor.getLevel() && waterSensor.getLevel() < 10 && !laserSensor.isHopperLow()) {
-        Serial.printf("Water level %d%% below threshold, transitioning to MIXING\n", waterSensor.getLevel());
+    WaterLevelSensor::Level waterLevel = waterSensor.getLevel();
+    
+    if (waterLevel == WaterLevelSensor::EMPTY && !laserSensor.isHopperLow()) {
+        Serial.println("Water level EMPTY, transitioning to MIXING");
         transitionTo(MIXING, handleMixingState);
     }
 }
 
 void handleMixingState() {
-    int currentWaterLevel = waterSensor.getLevel();
+    WaterLevelSensor::Level waterLevel = waterSensor.getLevel();
     
-    if (currentWaterLevel > 90) {
-        Serial.printf("Water level %d%% above threshold, transitioning to WAITING_POST_MIX\n", currentWaterLevel);
+    if (waterLevel == WaterLevelSensor::FULL) {
+        Serial.println("Water level FULL, transitioning to WAITING_POST_MIX");
         sensorActivatedDuringPostMix = false;
         transitionTo(WAITING_POST_MIX, handleWaitingPostMixState);
     }
 }
 
 void handleWaitingPostMixState() {
-    int currentWaterLevel = waterSensor.getLevel();
+    WaterLevelSensor::Level waterLevel = waterSensor.getLevel();
     
-    if (currentWaterLevel < 10) {
+    if (waterLevel == WaterLevelSensor::EMPTY) {
         Serial.println("Water level dropped during post-mix waiting period");
         sensorActivatedDuringPostMix = true;
     }
@@ -275,24 +266,10 @@ void handleWashDispenseState() {
 }
 
 void handleErrorState() {
-    clearLCD();
-    setCursor(0, 0);
-    printLCD("ERROR:");
-
-    if (currentErrors & ERROR_HOPPER_LOW) {
-        printLCD("Low Hopper");
-    }
-    if (currentErrors & ERROR_MIX_TIME_EXCEEDED) {
-        printLCD("Mix Time Exceeded");
-    }
-    if (currentErrors & ERROR_WATER_SENSOR_FAILURE) {
-        printLCD("Water Sensor Fail");
-    }
-
-    checkForErrors();
-
-    if (currentErrors == 0) {
-        Serial.println("Errors cleared, returning to IDLE");
+    errorHandler->handleErrorState();
+    
+    // If errors are cleared, transition back to IDLE
+    if (!errorHandler->hasErrors()) {
         transitionTo(IDLE, handleIdleState);
     }
 }
@@ -302,7 +279,6 @@ void handleErrorState() {
 void printDebugInfo() {
     debugPrintln("\n=== System Status ===");
 
-    // Smaller buffer size to reduce memory usage
     char buffer[60];
 
     // Current state and uptime
@@ -310,9 +286,17 @@ void printDebugInfo() {
              getStateString(currentState), millis() / 1000);
     debugPrintln(buffer);
 
-    // Water and hopper levels
-    snprintf(buffer, sizeof(buffer), "Water Level: %d%%, Hopper Level: %d%%", 
-             waterSensor.getLevel(), hopperLevel);
+    // Water level state and hopper level
+    const char* waterLevelStr;
+    switch (waterSensor.getLevel()) {
+        case WaterLevelSensor::EMPTY: waterLevelStr = "EMPTY"; break;
+        case WaterLevelSensor::PARTIAL: waterLevelStr = "PARTIAL"; break;
+        case WaterLevelSensor::FULL: waterLevelStr = "FULL"; break;
+        default: waterLevelStr = "ERROR"; break;
+    }
+    
+    snprintf(buffer, sizeof(buffer), "Water Level: %s, Hopper Level: %d%%", 
+             waterLevelStr, hopperLevel);
     debugPrintln(buffer);
 
     // Error status summary
@@ -326,7 +310,6 @@ void printDebugInfo() {
 
     debugPrintln("==================\n");
 }
-
 
 // ----------------- Pin Setup -----------------
 

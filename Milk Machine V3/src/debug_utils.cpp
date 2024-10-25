@@ -57,6 +57,8 @@ void setupTelnet() {
     debugPrintln("Telnet server started");
 }
 
+// In debug_utils.cpp, update the telnet connection handler and add error reporting:
+
 void handleTelnet() {
     if (!telnetEnabled) return;
 
@@ -78,10 +80,8 @@ void handleTelnet() {
                 telnetClients[i].printf("System Uptime: %lu seconds\r\n", millis() / 1000);
                 
                 // Print initial system status
-                telnetClients[i].println("\nCurrent System Status:");
-                telnetClients[i].printf("Free Heap: %lu bytes\r\n", ESP.getFreeHeap());
-                telnetClients[i].printf("WiFi RSSI: %d dBm\r\n", WiFi.RSSI());
-
+                printSystemStatus();
+                
                 clientFound = true;
                 break;
             }
@@ -101,11 +101,50 @@ void handleTelnet() {
             // Check for input from telnet client
             while (telnetClients[i].available()) {
                 char c = telnetClients[i].read();
+                // Add command handling here if needed
                 telnetClients[i].write(c);  // Echo back to client
             }
         } else if (telnetClients[i]) {
-            // Clean up if the client has disconnected
             telnetClients[i].stop();
         }
     }
+}
+
+// Add this helper function to print system status
+void printSystemStatus() {
+    debugPrintln("\n=== System Status ===");
+    
+    // Current state and uptime
+    debugPrintf("State: %s\r\n", getStateString(currentState));
+    debugPrintf("Uptime: %lu seconds\r\n", millis() / 1000);
+    
+    // Water level state
+    const char* waterLevelStr;
+    switch (waterSensor.getLevel()) {
+        case WaterLevelSensor::EMPTY: waterLevelStr = "EMPTY"; break;
+        case WaterLevelSensor::PARTIAL: waterLevelStr = "PARTIAL"; break;
+        case WaterLevelSensor::FULL: waterLevelStr = "FULL"; break;
+        default: waterLevelStr = "ERROR"; break;
+    }
+    debugPrintf("Water Level: %s\r\n", waterLevelStr);
+    
+    // Hopper level
+    debugPrintf("Hopper Level: %d%%\r\n", hopperLevel);
+    
+    // Error status
+    if (errorHandler && errorHandler->hasErrors()) {
+        uint8_t errors = errorHandler->getCurrentErrors();
+        debugPrintf("Errors (0x%02X):", errors);
+        if (errors & ErrorHandler::ERROR_HOPPER_LOW) debugPrint(" HOPPER_LOW");
+        if (errors & ErrorHandler::ERROR_MIX_TIME_EXCEEDED) debugPrint(" MIX_TIME_EXCEEDED");
+        if (errors & ErrorHandler::ERROR_WATER_SENSOR_FAILURE) debugPrint(" WATER_SENSOR_FAILURE");
+        debugPrint("\r\n");
+    } else {
+        debugPrintln("No active errors");
+    }
+    
+    // System resources
+    debugPrintf("Free Heap: %lu bytes\r\n", ESP.getFreeHeap());
+    debugPrintf("WiFi RSSI: %d dBm\r\n", WiFi.RSSI());
+    debugPrintln("==================\n");
 }

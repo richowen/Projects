@@ -31,14 +31,19 @@ extern const int probe2Pin;
 extern const int washStandbyPin;
 extern const int washDispensePin;
 extern const int resetSwitchPin;
+extern const int waterBottomPin;
+extern const int waterTopPin;
 
 // Timing constants
 extern const unsigned long waitingDuration;
 extern const unsigned long maxMixingDuration;
+extern const unsigned long mixStartTime;
 extern const unsigned long debounceDelay;
 extern const unsigned long LCD_UPDATE_INTERVAL;
 extern unsigned long lastStableTime; 
 extern int lastStableReading;
+extern unsigned long lastDebugUpdate;
+extern const unsigned long DEBUG_UPDATE_INTERVAL;
 
 // Updated State enum
 enum State {
