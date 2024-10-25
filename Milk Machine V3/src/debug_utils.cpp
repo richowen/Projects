@@ -40,9 +40,13 @@ void debugPrintf(const char* format, ...) {
     char buf[256];
     va_list args;
     va_start(args, format);
-    vsnprintf(buf, sizeof(buf), format, args);
+    int len = vsnprintf(buf, sizeof(buf), format, args);
     va_end(args);
-    debugPrint(buf);
+
+    // Only send output if it's within buffer size limits
+    if (len > 0 && len < sizeof(buf)) {
+        debugPrint(buf);
+    }
 }
 
 // Telnet implementations
@@ -59,15 +63,17 @@ void handleTelnet() {
     // Check for new client connections
     if (telnetServer.hasClient()) {
         bool clientFound = false;
-        
+        WiFiClient serverClient = telnetServer.available();
+
         // Find first available slot
         for (uint8_t i = 0; i < MAX_TELNET_CLIENTS; i++) {
             if (!telnetClients[i] || !telnetClients[i].connected()) {
                 if (telnetClients[i]) {
-                    telnetClients[i].stop();
+                    telnetClients[i].stop();  // Clean up any disconnected clients
                 }
-                telnetClients[i] = telnetServer.available();
+                telnetClients[i] = serverClient;
                 debugPrintln("New telnet client connected");
+
                 telnetClients[i].println("Welcome to Milk Mixer Debug Console");
                 telnetClients[i].printf("System Uptime: %lu seconds\r\n", millis() / 1000);
                 
@@ -75,15 +81,14 @@ void handleTelnet() {
                 telnetClients[i].println("\nCurrent System Status:");
                 telnetClients[i].printf("Free Heap: %lu bytes\r\n", ESP.getFreeHeap());
                 telnetClients[i].printf("WiFi RSSI: %d dBm\r\n", WiFi.RSSI());
-                
+
                 clientFound = true;
                 break;
             }
         }
-        
-        // No free slot found
+
+        // Reject connection if no free slot is found
         if (!clientFound) {
-            WiFiClient serverClient = telnetServer.available();
             serverClient.println("Too many connections");
             serverClient.stop();
             debugPrintln("Telnet connection rejected - too many clients");
@@ -96,10 +101,11 @@ void handleTelnet() {
             // Check for input from telnet client
             while (telnetClients[i].available()) {
                 char c = telnetClients[i].read();
-                // Handle client commands here if needed
-                // For now, just echo back
-                telnetClients[i].write(c);
+                telnetClients[i].write(c);  // Echo back to client
             }
+        } else if (telnetClients[i]) {
+            // Clean up if the client has disconnected
+            telnetClients[i].stop();
         }
     }
 }

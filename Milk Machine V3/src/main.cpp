@@ -9,7 +9,6 @@
 #include "debug_utils.h"
 #include <WiFi.h>
 #include <WebServer.h>
-#include <ElegantOTA.h>
 #include <WiFiClient.h>
 #include <ESPmDNS.h>
 
@@ -81,7 +80,7 @@ void setup() {
         Serial.println("Laser sensor initialized successfully");
     }
 
-    // Initialize water sensor (New)
+    // Initialize water sensor
     waterSensor.begin();
     Serial.println("Water sensor initialized");
 
@@ -106,19 +105,14 @@ void setup() {
 
     // Start the web server
     server.begin();
-    Serial.println("HTTP server and ElegantOTA started");
-
-     // Initialize ElegantOTA
-    ElegantOTA.begin(&server);
+    Serial.println("HTTP server started");
 
     // Setup Home Assistant integration
     setupHomeAssistant();
     Serial.println("Home Assistant integration initialized");
 
-    // Initialize Telnet server
-    telnetServer.begin();
-    telnetServer.setNoDelay(true);
-    Serial.println("Telnet server started");
+    // **Initialize Telnet server using setupTelnet()**
+    setupTelnet();
 
     // Initial state
     transitionTo(IDLE, handleIdleState);
@@ -131,6 +125,7 @@ void setup() {
     
     delay(1000);
 }
+
 
 void loop() {
 
@@ -175,12 +170,10 @@ void loop() {
         lastLCDUpdate = millis();
     }
 
-    ElegantOTA.loop();
-
     // Handle Home Assistant tasks
     loopHomeAssistant();
 
-    // Handle web server requests and ElegantOTA updates
+    // Handle web server request updates
     server.handleClient();
 
     // Handle Telnet communication
@@ -216,11 +209,9 @@ void updateSensors() {
     }
 
     // Update water level sensor
-    waterSensor.update();  // Just call update - it handles everything internally now
-    
-    // You can check reliability after update if needed
-    if (!waterSensor.isReliable()) {
-        Serial.println("WARNING: Water sensor reading not reliable!");
+    bool waterUpdateSuccess = waterSensor.update();
+    if (!waterUpdateSuccess) {
+        Serial.println("WARNING: Water sensor update failed!");
     }
 
     // Update Home Assistant with new values
@@ -238,11 +229,6 @@ void checkForErrors() {
     if (currentState == MIXING && (millis() - stateStartTime >= maxMixingDuration)) {
         newErrors |= ERROR_MIX_TIME_EXCEEDED;
         Serial.println("Error: Mix time exceeded");
-    }
-
-    if (!waterSensor.isReliable()) {
-        newErrors |= ERROR_WATER_SENSOR_FAILURE;
-        Serial.println("Error: Water sensor failure");
     }
 
     if (newErrors != currentErrors) {
@@ -264,7 +250,7 @@ void handleErrors() {
 // ----------------- State Handlers -----------------
 
 void handleIdleState() {
-    if (waterSensor.isReliable() && waterSensor.getLevel() < 10 && !laserSensor.isHopperLow()) {
+    if (waterSensor.getLevel() && waterSensor.getLevel() < 10 && !laserSensor.isHopperLow()) {
         Serial.printf("Water level %d%% below threshold, transitioning to MIXING\n", waterSensor.getLevel());
         transitionTo(MIXING, handleMixingState);
     }
@@ -334,41 +320,32 @@ void handleErrorState() {
 
 void printDebugInfo() {
     debugPrintln("\n=== System Status ===");
-    
-    char buffer[100];
-    
-    snprintf(buffer, sizeof(buffer), "Current State: %s (for %ld seconds)", 
-             getStateString(currentState), 
-             (millis() - stateStartTime) / 1000);
+
+    // Smaller buffer size to reduce memory usage
+    char buffer[60];
+
+    // Current state and uptime
+    snprintf(buffer, sizeof(buffer), "State: %s, Uptime: %lus", 
+             getStateString(currentState), millis() / 1000);
     debugPrintln(buffer);
-    
-    snprintf(buffer, sizeof(buffer), "Water Level: %d%% (Reliable: %s)", 
-             waterSensor.getLevel(), 
-             waterSensor.isReliable() ? "Yes" : "No");
+
+    // Water and hopper levels
+    snprintf(buffer, sizeof(buffer), "Water Level: %d%%, Hopper Level: %d%%", 
+             waterSensor.getLevel(), hopperLevel);
     debugPrintln(buffer);
-    
-    snprintf(buffer, sizeof(buffer), "Hopper Level: %d%%", hopperLevel);
+
+    // Error status summary
+    snprintf(buffer, sizeof(buffer), "Errors: 0x%02X", currentErrors);
     debugPrintln(buffer);
-    
-    snprintf(buffer, sizeof(buffer), "Error Status: 0x%02X", currentErrors);
+
+    // Short summary of free heap memory and Wi-Fi signal strength
+    snprintf(buffer, sizeof(buffer), "Heap: %luB, WiFi RSSI: %ddBm", 
+             ESP.getFreeHeap(), WiFi.RSSI());
     debugPrintln(buffer);
-    
-    debugPrintln("\nPin States:");
-    snprintf(buffer, sizeof(buffer), "Mixer: %s", digitalRead(mixerPin) == LOW ? "ON" : "OFF");
-    debugPrintln(buffer);
-    snprintf(buffer, sizeof(buffer), "Water: %s", digitalRead(waterPin) == LOW ? "ON" : "OFF");
-    debugPrintln(buffer);
-    snprintf(buffer, sizeof(buffer), "Auger: %s", digitalRead(augerPin) == LOW ? "ON" : "OFF");
-    debugPrintln(buffer);
-    snprintf(buffer, sizeof(buffer), "Agitator: %s", digitalRead(agitatorPin) == LOW ? "ON" : "OFF");
-    debugPrintln(buffer);
-    snprintf(buffer, sizeof(buffer), "Wash Standby: %s", digitalRead(washStandbyPin) == LOW ? "YES" : "NO");
-    debugPrintln(buffer);
-    snprintf(buffer, sizeof(buffer), "Wash Dispense: %s", digitalRead(washDispensePin) == LOW ? "YES" : "NO");
-    debugPrintln(buffer);
-    
+
     debugPrintln("==================\n");
 }
+
 
 // ----------------- Pin Setup -----------------
 
