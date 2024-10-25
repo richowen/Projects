@@ -26,16 +26,17 @@ const int probe1Pin = 18;
 const int probe2Pin = 19;
 const int washStandbyPin = 23;
 const int washDispensePin = 5;
-const int resetSwitchPin = 13;
 const int waterBottomPin = 12;
 const int waterTopPin = 13;
 
 // Timing constants
 const unsigned long waitingDuration = 5000;
-const unsigned long maxMixingDuration = 60000;
+const unsigned long maxMixingDuration = 10000;
 const unsigned long debounceDelay = 500;
 const unsigned long LCD_UPDATE_INTERVAL = 1000;
 const unsigned long DEBUG_UPDATE_INTERVAL = 5000;
+unsigned long mixStartTime = 0;
+bool mixTimerActive = false;
 int lastStableReading = 0;
 unsigned long lastStableTime = 0; 
 unsigned long lastDebugUpdate = 0;

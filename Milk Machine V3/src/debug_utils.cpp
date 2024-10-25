@@ -5,6 +5,7 @@
 const uint16_t TELNET_PORT = 23;
 const uint8_t MAX_TELNET_CLIENTS = 2;
 const unsigned long TELNET_TIMEOUT = 1000;
+uint8_t currentErrors = 0;
 
 // Global variables
 WiFiServer telnetServer(TELNET_PORT);
@@ -80,7 +81,7 @@ void handleTelnet() {
                 telnetClients[i].printf("System Uptime: %lu seconds\r\n", millis() / 1000);
                 
                 // Print initial system status
-                printSystemStatus();
+                printDebugInfo();
                 
                 clientFound = true;
                 break;
@@ -111,13 +112,17 @@ void handleTelnet() {
 }
 
 // Add this helper function to print system status
-void printSystemStatus() {
+
+void printDebugInfo() {
     debugPrintln("\n=== System Status ===");
-    
+
+    char buffer[60];
+
     // Current state and uptime
-    debugPrintf("State: %s\r\n", getStateString(currentState));
-    debugPrintf("Uptime: %lu seconds\r\n", millis() / 1000);
-    
+    snprintf(buffer, sizeof(buffer), "State: %s, Uptime: %lus", 
+             getStateString(currentState), millis() / 1000);
+    debugPrintln(buffer);
+
     // Water level state
     const char* waterLevelStr;
     switch (waterSensor.getLevel()) {
@@ -126,25 +131,18 @@ void printSystemStatus() {
         case WaterLevelSensor::FULL: waterLevelStr = "FULL"; break;
         default: waterLevelStr = "ERROR"; break;
     }
-    debugPrintf("Water Level: %s\r\n", waterLevelStr);
     
-    // Hopper level
-    debugPrintf("Hopper Level: %d%%\r\n", hopperLevel);
-    
-    // Error status
-    if (errorHandler && errorHandler->hasErrors()) {
-        uint8_t errors = errorHandler->getCurrentErrors();
-        debugPrintf("Errors (0x%02X):", errors);
-        if (errors & ErrorHandler::ERROR_HOPPER_LOW) debugPrint(" HOPPER_LOW");
-        if (errors & ErrorHandler::ERROR_MIX_TIME_EXCEEDED) debugPrint(" MIX_TIME_EXCEEDED");
-        if (errors & ErrorHandler::ERROR_WATER_SENSOR_FAILURE) debugPrint(" WATER_SENSOR_FAILURE");
-        debugPrint("\r\n");
-    } else {
-        debugPrintln("No active errors");
-    }
-    
-    // System resources
-    debugPrintf("Free Heap: %lu bytes\r\n", ESP.getFreeHeap());
-    debugPrintf("WiFi RSSI: %d dBm\r\n", WiFi.RSSI());
+    snprintf(buffer, sizeof(buffer), "Water Level: %s", waterLevelStr);
+    debugPrintln(buffer);
+
+    // Error status summary
+    snprintf(buffer, sizeof(buffer), "Errors: 0x%02X", currentErrors);
+    debugPrintln(buffer);
+
+    // Short summary of free heap memory and Wi-Fi signal strength
+    snprintf(buffer, sizeof(buffer), "Heap: %luB, WiFi RSSI: %ddBm", 
+             ESP.getFreeHeap(), WiFi.RSSI());
+    debugPrintln(buffer);
+
     debugPrintln("==================\n");
 }

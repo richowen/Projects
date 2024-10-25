@@ -1,5 +1,4 @@
-// config.h
-
+// In config.h:
 #ifndef CONFIG_H
 #define CONFIG_H
 #define FILTER_SAMPLES 10
@@ -37,32 +36,27 @@ extern const int waterTopPin;
 // Timing constants
 extern const unsigned long waitingDuration;
 extern const unsigned long maxMixingDuration;
-extern const unsigned long mixStartTime;
 extern const unsigned long debounceDelay;
 extern const unsigned long LCD_UPDATE_INTERVAL;
-extern unsigned long lastStableTime; 
+extern const unsigned long DEBUG_UPDATE_INTERVAL;
+
+// Runtime variables
+extern unsigned long lastStableTime;
 extern int lastStableReading;
 extern unsigned long lastDebugUpdate;
-extern const unsigned long DEBUG_UPDATE_INTERVAL;
+
+// Mix timer tracking
+extern unsigned long mixStartTime;
+extern bool mixTimerActive;
 
 // Updated State enum
 enum State {
-  IDLE,
-  MIXING,
-  WAITING_POST_MIX,
-  ERROR,
-  WASH_STANDBY,
-  WASH_DISPENSE
+    IDLE,
+    MIXING,
+    WAITING_POST_MIX,
+    ERROR,
+    WASH_STANDBY,
+    WASH_DISPENSE
 };
 
 #endif // CONFIG_H
-
-#ifdef DEBUG
-    #define DEBUG_PRINT(x) if(Serial) Serial.print(x)
-    #define DEBUG_PRINTLN(x) if(Serial) Serial.println(x)
-    #define DEBUG_PRINTF(x, ...) if(Serial) Serial.printf(x, __VA_ARGS__)
-#else
-    #define DEBUG_PRINT(x)
-    #define DEBUG_PRINTLN(x)
-    #define DEBUG_PRINTF(x, ...)
-#endif

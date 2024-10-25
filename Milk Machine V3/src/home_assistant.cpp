@@ -44,20 +44,10 @@ void loopHomeAssistant() {
     mqttClient.loop();  // Keep the connection alive and process messages
 }
 
-void updateHomeAssistant(const char* state, int hopperLevel) {
+void updateHomeAssistant(const char* state) {
     if (mqttClient.connected()) {
         // Publish the state
         mqttClient.publish(MQTT_STATE_TOPIC, state);
-
-        // Publish the hopper level as a string
-        char hopperLevelStr[8];
-        snprintf(hopperLevelStr, sizeof(hopperLevelStr), "%d", hopperLevel);
-        mqttClient.publish(MQTT_HOPPER_TOPIC, hopperLevelStr);
-
-        Serial.print("Updated Home Assistant with state: ");
-        Serial.print(state);
-        Serial.print(", Hopper Level: ");
-        Serial.println(hopperLevel);
     } else {
         Serial.println("Failed to update Home Assistant: not connected.");
     }

@@ -13,7 +13,7 @@ void setupLCD() {
     Serial.println("LCD initialized.");
 }
 
-void updateLCD(State state, int hopperLevel, const char* errorMessage) {
+void updateLCD(State state, const char* errorMessage) {
     lcd.clear();
 
     // Display system state
@@ -49,9 +49,6 @@ void updateLCD(State state, int hopperLevel, const char* errorMessage) {
             lcd.print("UNKNOWN STATE");
             break;
     }
-
-    // Display hopper level as a progress bar
-    displayHopperLevel(hopperLevel);
 }
 
 void displayHopperLevel(int level) {

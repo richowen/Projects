@@ -25,7 +25,7 @@ void setupHomeAssistant();
 void loopHomeAssistant();
 
 // Update the state and hopper level in Home Assistant
-void updateHomeAssistant(const char* state, int hopperLevel);
+void updateHomeAssistant(const char* state);
 
 // Reconnect to MQTT broker if the connection is lost
 void reconnect();

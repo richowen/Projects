@@ -24,7 +24,7 @@ extern WiFiClient telnetClients[];
 extern bool telnetEnabled;
 
 // Debug print functions
-void printSystemStatus();
+void printDebugInfo();
 void debugPrint(const char* message);
 void debugPrint(String message);
 void debugPrintln(const char* message);

@@ -9,7 +9,7 @@
 void setupLCD();
 
 // Update the LCD based on the current state
-void updateLCD(State state, int hopperLevel, const char* errorMessage = nullptr);
+void updateLCD(State state, const char* errorMessage = nullptr);
 
 // Clear the display
 void clearLCD();
