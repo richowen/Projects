@@ -34,6 +34,7 @@ uint8_t currentErrors = 0;
 // Sensor objects
 LaserSensor laserSensor;         // Laser sensor object
 WaterLevelSensor waterSensor(waterBottomPin, waterTopPin);    // Water level sensor object
+StateHandler getStateHandler(State state);
 
 // Function declarations
 void setupPins();
@@ -113,65 +114,46 @@ void setup() {
     delay(1000);
 }
 
+// ----------------- Main Loop -----------------
 void loop() {
-    // Check for wash mode changes
+    // 1. Update sensor readings every second
+    static unsigned long lastSensorUpdate = 0;
+    if (millis() - lastSensorUpdate >= 1000) {
+        updateSensors();
+        lastSensorUpdate = millis();
+    }
+
+    // 2. Check for wash mode changes
     State washMode = readWashMode();
-    if ((washMode == WASH_STANDBY || washMode == WASH_DISPENSE) && washMode != currentState) {
-        if (washMode == WASH_STANDBY) {
-            transitionTo(WASH_STANDBY, handleWashStandbyState);
-        } else if (washMode == WASH_DISPENSE) {
-            transitionTo(WASH_DISPENSE, handleWashDispenseState);
-        }
+    if (washMode != currentState && (washMode == WASH_STANDBY || washMode == WASH_DISPENSE)) {
+        transitionTo(washMode, getStateHandler(washMode));
     } else if ((currentState == WASH_STANDBY || currentState == WASH_DISPENSE) && washMode == IDLE) {
         transitionTo(IDLE, handleIdleState);
     }
 
-    // Proceed with the rest of the loop only if not in wash modes
-    if (currentState != WASH_STANDBY && currentState != WASH_DISPENSE) {
-        // Periodically update sensors
-        if (millis() - lastSensorUpdate >= 1000) {
-            updateSensors();
-            lastSensorUpdate = millis();
-        }
-
-        // Handle errors
-        errorHandler->handle(currentState);
-        
-        // Check if we need to enter error state
-        if (errorHandler->requiresErrorState()) {
-            transitionTo(ERROR, handleErrorState);
-        }
-        // Check if we can exit error state
-        else if (errorHandler->canExitErrorState()) {
-            transitionTo(IDLE, handleIdleState);
-        }
-        // Normal state execution
-        else if (!errorHandler->hasErrors() || currentState != ERROR) {
-            executeCurrentState();
-        }
+    // 3. Check for errors and handle states
+    errorHandler->handle(currentState);
+    
+    if (errorHandler->hasErrors() && currentState != ERROR) {
+        transitionTo(ERROR, handleErrorState);
+    } else if (!errorHandler->hasErrors() && currentState == ERROR) {
+        transitionTo(IDLE, handleIdleState);
+    } else if (!errorHandler->hasErrors()) {
+        executeCurrentState();
     }
 
-    // Periodically update the LCD
+    // 4. Update displays and communications
+    static unsigned long lastLCDUpdate = 0;
     if (millis() - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
         updateLCD(currentState, hopperLevel);
         lastLCDUpdate = millis();
     }
 
-        // Periodic debug status update
-    if (millis() - lastDebugUpdate >= DEBUG_UPDATE_INTERVAL) {
-        printSystemStatus();
-        lastDebugUpdate = millis();
-    }
-
-    // Handle Home Assistant tasks
     loopHomeAssistant();
-
-    // Handle Telnet communication
     handleTelnet();
 }
 
 // ----------------- State Management -----------------
-
 void executeCurrentState() {
     if (currentStateHandler) {
         currentStateHandler();
@@ -179,26 +161,31 @@ void executeCurrentState() {
 }
 
 void transitionTo(State newState, StateHandler newStateHandler) {
-    // Prevent transitioning to the same state
     if (currentState == newState) {
         return;
     }
 
     Serial.printf("State transition: %s -> %s\n", getStateString(currentState), getStateString(newState));
     
-    // Update error handler's state tracking
-    if (newState == ERROR) {
-        errorHandler->setInErrorState(true);
-    } else {
-        errorHandler->setInErrorState(false);
-    }
-    
     currentState = newState;
     currentStateHandler = newStateHandler;
     stateStartTime = millis();
+    
     updateLCD(currentState, hopperLevel);
     updateDevices(newState);
     updateHomeAssistant(getStateString(newState), hopperLevel);
+}
+
+StateHandler getStateHandler(State state) {
+    switch (state) {
+        case IDLE: return handleIdleState;
+        case MIXING: return handleMixingState;
+        case WAITING_POST_MIX: return handleWaitingPostMixState;
+        case WASH_STANDBY: return handleWashStandbyState;
+        case WASH_DISPENSE: return handleWashDispenseState;
+        case ERROR: return handleErrorState;
+        default: return handleIdleState;
+    }
 }
 
 // ----------------- Sensor and Error Management -----------------
