@@ -8,9 +8,7 @@
 #include "water_level_sensor.h"
 #include "debug_utils.h"
 #include <WiFi.h>
-#include <WebServer.h>
 #include <WiFiClient.h>
-#include <ESPmDNS.h>
 
 // ----------------- Global Variables -----------------
 
@@ -35,9 +33,6 @@ uint8_t currentErrors = 0;
 // Sensor objects
 LaserSensor laserSensor;         // Laser sensor object
 WaterLevelSensor waterSensor;    // Water level sensor object
-
-// Web Server
-WebServer server(80);  // Initialize WebServer
 
 // Function declarations
 void setupPins();
@@ -95,17 +90,6 @@ void setup() {
     Serial.println("\nWiFi connected");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
-
-    // Start mDNS service
-    if (!MDNS.begin("MyESP32")) {
-        Serial.println("Error starting mDNS");
-    } else {
-        Serial.println("mDNS responder started");
-    }
-
-    // Start the web server
-    server.begin();
-    Serial.println("HTTP server started");
 
     // Setup Home Assistant integration
     setupHomeAssistant();
@@ -172,9 +156,6 @@ void loop() {
 
     // Handle Home Assistant tasks
     loopHomeAssistant();
-
-    // Handle web server request updates
-    server.handleClient();
 
     // Handle Telnet communication
     handleTelnet();
