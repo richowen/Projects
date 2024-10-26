@@ -8,16 +8,15 @@ const int augerPin = 25;         // Powder auger relay
 const int agitatorPin = 26;      // Powder agitator relay
 const int washStandbyPin = 23;   // Wash standby switch
 const int washDispensePin = 5;   // Water solenoid activate switch in wash mode
-const int waterBottomPin = 12;   // Liquid level low switch (float switch)
-const int waterTopPin = 13;      // Liquid level high switch (float switch)
+const int liquidLevelPin = 12;   // Liquid level pressure switch
 
 // Relay States
 const uint8_t RELAY_ON = LOW;    // Active LOW relays
 const uint8_t RELAY_OFF = HIGH;
 
-// Switch States
-const uint8_t SWITCH_ON = LOW;   // Switch connected to GND when ON
-const uint8_t SWITCH_OFF = HIGH; // Pulled HIGH when OFF
+// **Reversed Switch States**
+const uint8_t SWITCH_ON = HIGH;   // Switch connected to VCC when ON (open)
+const uint8_t SWITCH_OFF = LOW;   // Pulled LOW when OFF (closed)
 
 // State Definitions
 enum State { IDLE, MIXING, POST_MIXING, WASH };
@@ -26,6 +25,11 @@ State currentState = IDLE;
 // Timing Variables
 unsigned long postMixingStart = 0;
 const unsigned long postMixingDuration = 5000; // 5 seconds in milliseconds
+
+// **Debounce Variables**
+const unsigned long debounceDelay = 200; // Aggressive debounce delay in milliseconds
+unsigned long lastLevelChangeTime = 0;
+bool debouncedLevelState = false;
 
 // LCD Configuration
 DFRobot_RGBLCD1602 lcd(0x2D, 16, 2);  // Adjusted I2C address to 0x2D
@@ -37,8 +41,7 @@ void postMixingState();
 void washState();
 void turnAllRelays(uint8_t state);
 void updateState(State newState);
-bool isFull();
-bool isEmpty();
+bool isLevelReached();
 
 // LCD Helper Functions
 void setLCDColor(int r, int g, int b);
@@ -65,8 +68,7 @@ void setup() {
   // Set switch pins as inputs with pull-up resistors
   pinMode(washStandbyPin, INPUT_PULLUP);
   pinMode(washDispensePin, INPUT_PULLUP);
-  pinMode(waterBottomPin, INPUT_PULLUP);
-  pinMode(waterTopPin, INPUT_PULLUP);
+  pinMode(liquidLevelPin, INPUT_PULLUP);
 
   // Initialize all relays to OFF state
   turnAllRelays(RELAY_OFF);
@@ -77,6 +79,10 @@ void setup() {
   // Display initial state on LCD
   lcd.setCursor(0, 1);
   lcd.print("State: IDLE     "); // Spaces to clear any residual text
+
+  // Initialize debounce variables
+  debouncedLevelState = false;
+  lastLevelChangeTime = millis();
 }
 
 void loop() {
@@ -106,14 +112,14 @@ void loop() {
 
 void idleState() {
   turnAllRelays(RELAY_OFF);
-  if (isEmpty()) {
+  if (!isLevelReached()) {
     updateState(MIXING);
   }
 }
 
 void mixingState() {
   turnAllRelays(RELAY_ON);
-  if (isFull()) {
+  if (isLevelReached()) {
     updateState(POST_MIXING);
     postMixingStart = millis(); // Record the start time for post-mixing
   }
@@ -196,15 +202,25 @@ void updateState(State newState) {
   }
 }
 
-// Liquid Level Functions
-bool isFull() {
-  // Both float switches are ON when the tank is full
-  return digitalRead(waterBottomPin) == SWITCH_ON && digitalRead(waterTopPin) == SWITCH_ON;
-}
+// Liquid Level Function with Aggressive Debouncing
+bool isLevelReached() {
+  static bool lastRawLevelState = SWITCH_OFF;
+  bool currentRawLevelState = digitalRead(liquidLevelPin);
 
-bool isEmpty() {
-  // Both float switches are OFF when the tank is empty
-  return digitalRead(waterBottomPin) == SWITCH_OFF && digitalRead(waterTopPin) == SWITCH_OFF;
+  if (currentRawLevelState != lastRawLevelState) {
+    lastLevelChangeTime = millis(); // Reset the debounce timer
+  }
+
+  if ((millis() - lastLevelChangeTime) >= debounceDelay) {
+    if (currentRawLevelState != debouncedLevelState) {
+      debouncedLevelState = currentRawLevelState;
+      Serial.print("Liquid level state changed to: ");
+      Serial.println(debouncedLevelState == SWITCH_ON ? "REACHED" : "NOT REACHED");
+    }
+  }
+
+  lastRawLevelState = currentRawLevelState;
+  return debouncedLevelState == SWITCH_ON;
 }
 
 // LCD Helper Functions
