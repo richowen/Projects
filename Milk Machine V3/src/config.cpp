@@ -26,8 +26,7 @@ const int probe1Pin = 18;
 const int probe2Pin = 19;
 const int washStandbyPin = 23;
 const int washDispensePin = 5;
-const int waterBottomPin = 12;
-const int waterTopPin = 13;
+const int liquidLevelPin = 12;  // Single pressure switch pin
 
 // Timing constants
 const unsigned long waitingDuration = 5000;
@@ -38,5 +37,6 @@ const unsigned long DEBUG_UPDATE_INTERVAL = 5000;
 unsigned long mixStartTime = 0;
 bool mixTimerActive = false;
 int lastStableReading = 0;
-unsigned long lastStableTime = 0; 
-unsigned long lastDebugUpdate = 0;
+unsigned long lastStableTime = 0;
+unsigned long lastUpdate = 0;
+const unsigned long UPDATE_INTERVAL = 100;

@@ -3,50 +3,42 @@
 #define WATER_LEVEL_SENSOR_H
 
 #include <Arduino.h>
+#include "config.h"  // Include for debounceDelay
 
 class WaterLevelSensor {
 public:
-    // Water level states based on float switch combinations
+    // Simplified water level states for pressure switch
     enum Level {
-        EMPTY,      // Both switches open
-        PARTIAL,    // Bottom switch closed, top open
-        FULL,       // Both switches closed
-        ERROR       // Invalid state (top closed, bottom open)
+        EMPTY,      // Switch open (LOW with pullup)
+        FULL,       // Switch closed (HIGH)
+        ERROR       // Reserved for sensor failure detection
     };
 
-    WaterLevelSensor(uint8_t bottomPin, uint8_t topPin) 
-        : _bottomPin(bottomPin), _topPin(topPin) {}
+    WaterLevelSensor(uint8_t pressurePin) 
+        : _pressurePin(pressurePin) {}
     
     void begin() {
-        pinMode(_bottomPin, INPUT_PULLUP);
-        pinMode(_topPin, INPUT_PULLUP);
+        pinMode(_pressurePin, INPUT_PULLUP);
         _lastValidReading = millis();
     }
     
     Level update() {
-        // Read both switches (LOW = closed/wet, HIGH = open/dry due to pullup)
-        bool bottomClosed = (digitalRead(_bottomPin) == LOW);
-        bool topClosed = (digitalRead(_topPin) == LOW);
+        // Read pressure switch (LOW = empty, HIGH = full with pullup)
+        bool isFull = (digitalRead(_pressurePin) == LOW);
         
-        // Debounce readings
-        if (bottomClosed != _lastBottom || topClosed != _lastTop) {
-            if (millis() - _lastChangeTime >= DEBOUNCE_TIME) {
-                _lastBottom = bottomClosed;
-                _lastTop = topClosed;
+        // Debounce readings using global debounceDelay
+        if (isFull != _lastReading) {
+            if (millis() - _lastChangeTime >= debounceDelay) {
+                _lastReading = isFull;
                 _lastChangeTime = millis();
+                
+                // Update current level
+                _currentLevel = isFull ? FULL : EMPTY;
+                
+                // Debug output on state change
+                Serial.printf("Water level changed to: %s\n", 
+                    _currentLevel == FULL ? "FULL" : "EMPTY");
             }
-        }
-        
-        // Determine water level state
-        if (!_lastBottom && !_lastTop) {
-            _currentLevel = EMPTY;
-        } else if (_lastBottom && !_lastTop) {
-            _currentLevel = PARTIAL;
-        } else if (_lastBottom && _lastTop) {
-            _currentLevel = FULL;
-        } else {
-            // Invalid state: top closed but bottom open
-            _currentLevel = ERROR;
         }
         
         return _currentLevel;
@@ -60,29 +52,23 @@ public:
         return _currentLevel != ERROR;
     }
     
-    // Helper methods for state checking
     bool isEmpty() const { return _currentLevel == EMPTY; }
     bool isFull() const { return _currentLevel == FULL; }
     bool hasError() const { return _currentLevel == ERROR; }
     
-    // Convert level to percentage for compatibility with existing code
+    // Convert level to percentage for compatibility
     uint8_t getLevelPercent() const {
         switch (_currentLevel) {
             case EMPTY: return 0;
-            case PARTIAL: return 50;
             case FULL: return 100;
             default: return 0;  // ERROR state
         }
     }
 
 private:
-    const uint8_t _bottomPin;
-    const uint8_t _topPin;
-    const unsigned long DEBOUNCE_TIME = 50;  // 50ms debounce
-    
+    const uint8_t _pressurePin;
     Level _currentLevel = EMPTY;
-    bool _lastBottom = false;
-    bool _lastTop = false;
+    bool _lastReading = false;
     unsigned long _lastChangeTime = 0;
     unsigned long _lastValidReading = 0;
 };

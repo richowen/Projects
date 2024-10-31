@@ -30,8 +30,7 @@ extern const int probe2Pin;
 extern const int washStandbyPin;
 extern const int washDispensePin;
 extern const int resetSwitchPin;
-extern const int waterBottomPin;
-extern const int waterTopPin;
+extern const int liquidLevelPin;
 
 // Timing constants
 extern const unsigned long waitingDuration;
@@ -39,6 +38,8 @@ extern const unsigned long maxMixingDuration;
 extern const unsigned long debounceDelay;
 extern const unsigned long LCD_UPDATE_INTERVAL;
 extern const unsigned long DEBUG_UPDATE_INTERVAL;
+extern const unsigned long UPDATE_INTERVAL;
+extern unsigned long lastUpdate;
 
 // Runtime variables
 extern unsigned long lastStableTime;

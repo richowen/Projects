@@ -19,17 +19,21 @@ const uint8_t SWITCH_ON = HIGH;   // Switch connected to VCC when ON (open)
 const uint8_t SWITCH_OFF = LOW;   // Pulled LOW when OFF (closed)
 
 // State Definitions
-enum State { IDLE, MIXING, POST_MIXING, WASH };
-State currentState = IDLE;
+enum State { IDLE, MIXING, POST_MIXING, WASH, ERROR }; // System states
+State currentState = IDLE; // Initial state
 
 // Timing Variables
 unsigned long postMixingStart = 0;
-const unsigned long postMixingDuration = 5000; // 5 seconds in milliseconds
+const unsigned long postMixingDuration = 5000; // 5 seconds
+unsigned long mixingStart = 0; // Start time for mixing state
+const unsigned long mixingTimeout = 10000; // 10 seconds
+bool timeoutOccurred = false; // Flag to indicate timeout
+bool errorMessageDisplayed = false;
 
 // **Debounce Variables**
 const unsigned long debounceDelay = 200; // Aggressive debounce delay in milliseconds
-unsigned long lastLevelChangeTime = 0;
-bool debouncedLevelState = false;
+unsigned long lastLevelChangeTime = 0; // Last time the level state changed
+bool debouncedLevelState = false; // Debounced level state
 
 // LCD Configuration
 DFRobot_RGBLCD1602 lcd(0x2D, 16, 2);  // Adjusted I2C address to 0x2D
@@ -39,8 +43,10 @@ void idleState();
 void mixingState();
 void postMixingState();
 void washState();
+void errorState();
 void turnAllRelays(uint8_t state);
 void updateState(State newState);
+void mixingtimout();
 bool isLevelReached();
 
 // LCD Helper Functions
@@ -105,6 +111,9 @@ void loop() {
     case WASH:
       washState();
       break;
+    case ERROR:
+      errorState();
+      break;
   }
 }
 
@@ -118,23 +127,47 @@ void idleState() {
 }
 
 void mixingState() {
-  turnAllRelays(RELAY_ON);
-  if (isLevelReached()) {
-    updateState(POST_MIXING);
-    postMixingStart = millis(); // Record the start time for post-mixing
-  }
+    // Initialize mixing start time if just entering mixing state
+    static bool initializeTimer = true;
+    if (initializeTimer) {
+        mixingStart = millis();
+        initializeTimer = false;
+        timeoutOccurred = false;
+    }
+    
+    // Check for timeout
+    if ((millis() - mixingStart) >= mixingTimeout) {
+        timeoutOccurred = true;
+        displayErrorMessage("Mixing Timeout");
+        updateState(ERROR);
+        initializeTimer = true;  // Reset for next time
+        return;
+    }
+    
+    turnAllRelays(RELAY_ON);
+    if (isLevelReached()) {
+        updateState(POST_MIXING);
+        postMixingStart = millis();
+        initializeTimer = true;  // Reset for next time
+    }
 }
 
 void postMixingState() {
-  // Only mixer remains on
-  digitalWrite(mixerPin, RELAY_ON);
-  digitalWrite(waterPin, RELAY_OFF);
-  digitalWrite(augerPin, RELAY_OFF);
-  digitalWrite(agitatorPin, RELAY_OFF);
+    // First check liquid level - highest priority
+    if (!isLevelReached()) {
+        updateState(MIXING);
+        return;  // Exit immediately to handle the low level
+    }
 
-  if (millis() - postMixingStart >= postMixingDuration) {
-    updateState(IDLE);
-  }
+    // If level is OK, continue with normal post-mixing behavior
+    digitalWrite(mixerPin, RELAY_ON);
+    digitalWrite(waterPin, RELAY_OFF);
+    digitalWrite(augerPin, RELAY_OFF);
+    digitalWrite(agitatorPin, RELAY_OFF);
+
+    if (millis() - postMixingStart >= postMixingDuration) {
+        updateState(IDLE);
+    }
 }
 
 void washState() {
@@ -151,6 +184,17 @@ void washState() {
   }
 }
 
+void errorState() {
+    turnAllRelays(RELAY_OFF);
+    
+    // Wait for wash switch toggle
+    if (digitalRead(washStandbyPin) == SWITCH_ON) {
+        timeoutOccurred = false;  // Clear the timeout flag
+        errorMessageDisplayed = false;  // Reset the display flag
+        updateState(IDLE);
+    }
+}
+
 // Relay Control Functions
 void turnAllRelays(uint8_t state) {
   digitalWrite(mixerPin, state);
@@ -161,16 +205,18 @@ void turnAllRelays(uint8_t state) {
 
 // Function to update the current state and print state change if necessary
 void updateState(State newState) {
-  if (newState != currentState) {
-    currentState = newState;
+    if (newState != currentState) {
+        currentState = newState;
+        errorMessageDisplayed = false;  // Reset the flag on state change
 
-    // Serial Output
-    Serial.print("State changed to: ");
-    switch (currentState) {
+        // Rest of your existing updateState function remains the same
+        Serial.print("State changed to: ");
+        switch (currentState) {
       case IDLE: Serial.println("IDLE"); break;
       case MIXING: Serial.println("MIXING"); break;
       case POST_MIXING: Serial.println("POST_MIXING"); break;
       case WASH: Serial.println("WASH"); break;
+      case ERROR: Serial.println("ERROR"); break;
     }
 
     // Update LCD Display
@@ -193,6 +239,10 @@ void updateState(State newState) {
       case WASH:
         setLCDColor(255, 165, 0);  // Orange
         lcd.print("State: WASH     ");
+        break;
+      case ERROR:
+        setLCDColor(255, 0, 0);  // Red
+        lcd.print("State: ERROR    ");
         break;
       default:
         setLCDColor(255, 0, 0);  // Red
@@ -234,9 +284,12 @@ void displayMessage(const char* message) {
 }
 
 void displayErrorMessage(const char* errorMessage) {
-  lcd.clear();
-  setLCDColor(255, 0, 0);  // Red
-  lcd.print("ERROR:");
-  lcd.setCursor(0, 1);
-  lcd.print(errorMessage);
+    if (!errorMessageDisplayed) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(errorMessage);
+        lcd.setCursor(0, 1);
+        lcd.print("Toggle WashSwtch");
+        errorMessageDisplayed = true;
+    }
 }

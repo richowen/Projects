@@ -127,7 +127,6 @@ void printDebugInfo() {
     const char* waterLevelStr;
     switch (waterSensor.getLevel()) {
         case WaterLevelSensor::EMPTY: waterLevelStr = "EMPTY"; break;
-        case WaterLevelSensor::PARTIAL: waterLevelStr = "PARTIAL"; break;
         case WaterLevelSensor::FULL: waterLevelStr = "FULL"; break;
         default: waterLevelStr = "ERROR"; break;
     }
