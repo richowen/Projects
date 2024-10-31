@@ -17,8 +17,8 @@ public:
 private:
     uint8_t _address;
     const int FULL_LEVEL_MM = 10;   // Distance reading when hopper is full
-    const int EMPTY_LEVEL_MM = 500; // Distance reading when hopper is empty
-    const int LOW_THRESHOLD = 10;   // Percentage threshold for low level warning
+    const int EMPTY_LEVEL_MM = 1000; // Distance reading when hopper is empty
+    const int LOW_THRESHOLD = 5;   // Percentage threshold for low level warning
 
     uint8_t readReg(uint8_t reg, uint8_t *pBuf, size_t size);
     bool writeReg(uint8_t reg, const uint8_t *pBuf, size_t size);

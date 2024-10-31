@@ -4,6 +4,8 @@
 #include "hopper_sensor.h"
 #include <WiFi.h>
 
+// *** Constants and Global Variables ***
+
 // Pin Definitions
 const int mixerPin = 16;       // Mixer motor relay
 const int waterPin = 17;       // Water dispenser relay
@@ -17,7 +19,7 @@ const int liquidLevelPin = 12; // Liquid level pressure switch
 const uint8_t RELAY_ON = LOW; // Active LOW relays
 const uint8_t RELAY_OFF = HIGH;
 
-// **Reversed Switch States**
+// Reversed Switch States
 const uint8_t SWITCH_ON = HIGH; // Switch connected to VCC when ON (open)
 const uint8_t SWITCH_OFF = LOW; // Pulled LOW when OFF (closed)
 
@@ -44,13 +46,16 @@ ErrorType currentError = NO_ERROR;
 unsigned long postMixingStart = 0;
 const unsigned long postMixingDuration = 5000;     // 5 seconds
 unsigned long mixingStart = 0;                     // Start time for mixing state
-const unsigned long mixingTimeout = 10000;         // 10 seconds
+const unsigned long mixingTimeout = 60000;         // 60 seconds
 bool timeoutOccurred = false;                      // Flag to indicate timeout
 bool errorMessageDisplayed = false;                // Flag to prevent multiple error messages
 unsigned long lastHopperUpdate = 0;                // Last time hopper level was updated
 const unsigned long HOPPER_UPDATE_INTERVAL = 1000; // 1 second in milliseconds
+unsigned long idleStart = 0;                       // Start time for idle state
+const unsigned long MIX_INTERVAL = 300000;         // 5 minutes of idle time
+const unsigned long IDLE_MIX_DURATION = 5000;      // 5 seconds of mixing
 
-// **Debounce Variables**
+// Debounce Variables
 const unsigned long debounceDelay = 500; // Aggressive debounce delay in milliseconds
 unsigned long lastLevelChangeTime = 0;   // Last time the level state changed
 bool debouncedLevelState = false;        // Debounced level state
@@ -77,6 +82,8 @@ void displayErrorMessage(const char *errorMessage);
 
 // Create hopper sensor instance
 HopperSensor hopperSensor;
+
+// *** Main Setup Function ***
 
 void setup()
 {
@@ -135,7 +142,12 @@ void setup()
     // Initialize debounce variables
     debouncedLevelState = false;
     lastLevelChangeTime = millis();
+
+    // Set initial idle start time
+    idleStart = millis();
 }
+
+// *** Main Loop Function ***
 
 // Main Loop
 void loop()
@@ -173,13 +185,39 @@ void loop()
     updateHopperLevel();
 }
 
-// Functions to handle each state
-void idleState()
-{
-    turnAllRelays(RELAY_OFF);
-    if (!isLevelReached())
-    {
+// *** State Functions ***
+
+void idleState() {
+    static bool mixerRunning = false;
+    static unsigned long mixerStartTime = 0;
+
+    // Default state - all relays off
+    if (!mixerRunning) {
+        turnAllRelays(RELAY_OFF);
+    }
+
+    // Check if liquid level is low - highest priority
+    if (!isLevelReached()) {
+        mixerRunning = false;  // Reset mixer state
         updateState(MIXING);
+        return;
+    }
+
+    // Handle periodic mixing
+    if (!mixerRunning) {
+        // Start a mixing cycle if interval has elapsed
+        if (millis() - idleStart >= MIX_INTERVAL) {
+            digitalWrite(mixerPin, RELAY_ON);
+            mixerStartTime = millis();
+            mixerRunning = true;
+        }
+    } else {
+        // Check if mixing duration is complete
+        if (millis() - mixerStartTime >= IDLE_MIX_DURATION) {
+            digitalWrite(mixerPin, RELAY_OFF);
+            mixerRunning = false;
+            idleStart = millis();  // Reset the interval timer
+        }
     }
 }
 
@@ -283,7 +321,8 @@ void errorState()
     }
 }
 
-// Helper function for hopper updates
+// *** Helper Functions ***
+
 void updateHopperLevel()
 {
     if (millis() - lastHopperUpdate >= HOPPER_UPDATE_INTERVAL)
