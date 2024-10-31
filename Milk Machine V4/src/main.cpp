@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "DFRobot_RGBLCD1602.h"
 #include "home_assistant.h"
+#include "hopper_sensor.h"
 #include <WiFi.h>
 
 // Pin Definitions
@@ -28,16 +29,26 @@ enum State
     POST_MIXING,
     WASH,
     ERROR
-};                         // System states
+}; // System states
 State currentState = IDLE; // Initial state
+
+enum ErrorType
+{
+    NO_ERROR,
+    TIMEOUT_ERROR,
+    HOPPER_LOW_ERROR
+};
+ErrorType currentError = NO_ERROR;
 
 // Timing Variables
 unsigned long postMixingStart = 0;
-const unsigned long postMixingDuration = 5000; // 5 seconds
-unsigned long mixingStart = 0;                 // Start time for mixing state
-const unsigned long mixingTimeout = 10000;     // 10 seconds
-bool timeoutOccurred = false;                  // Flag to indicate timeout
-bool errorMessageDisplayed = false;
+const unsigned long postMixingDuration = 5000;     // 5 seconds
+unsigned long mixingStart = 0;                     // Start time for mixing state
+const unsigned long mixingTimeout = 10000;         // 10 seconds
+bool timeoutOccurred = false;                      // Flag to indicate timeout
+bool errorMessageDisplayed = false;                // Flag to prevent multiple error messages
+unsigned long lastHopperUpdate = 0;                // Last time hopper level was updated
+const unsigned long HOPPER_UPDATE_INTERVAL = 1000; // 1 second in milliseconds
 
 // **Debounce Variables**
 const unsigned long debounceDelay = 500; // Aggressive debounce delay in milliseconds
@@ -57,11 +68,15 @@ void turnAllRelays(uint8_t state);
 void updateState(State newState);
 void mixingtimout();
 bool isLevelReached();
+void updateHopperLevel();
 
 // LCD Helper Functions
 void setLCDColor(int r, int g, int b);
 void displayMessage(const char *message);
 void displayErrorMessage(const char *errorMessage);
+
+// Create hopper sensor instance
+HopperSensor hopperSensor;
 
 void setup()
 {
@@ -85,6 +100,9 @@ void setup()
 
     // Initialize Home Assistant integration
     setupHomeAssistant();
+
+    // Initialize hopper sensor
+    hopperSensor.begin();
 
     // Initialize the LCD
     lcd.init();
@@ -119,9 +137,9 @@ void setup()
     lastLevelChangeTime = millis();
 }
 
+// Main Loop
 void loop()
 {
-
     // Handle Home Assistant MQTT connection
     loopHomeAssistant();
 
@@ -150,10 +168,12 @@ void loop()
         errorState();
         break;
     }
+
+    // Update hopper level readings and display
+    updateHopperLevel();
 }
 
 // Functions to handle each state
-
 void idleState()
 {
     turnAllRelays(RELAY_OFF);
@@ -165,7 +185,6 @@ void idleState()
 
 void mixingState()
 {
-    // Initialize mixing start time if just entering mixing state
     static bool initializeTimer = true;
     if (initializeTimer)
     {
@@ -178,9 +197,9 @@ void mixingState()
     if ((millis() - mixingStart) >= mixingTimeout)
     {
         timeoutOccurred = true;
-        displayErrorMessage("Mixing Timeout");
+        currentError = TIMEOUT_ERROR;
         updateState(ERROR);
-        initializeTimer = true; // Reset for next time
+        initializeTimer = true;
         return;
     }
 
@@ -191,7 +210,6 @@ void mixingState()
         postMixingStart = millis();
         initializeTimer = true; // Reset for next time
     }
-
 }
 
 void postMixingState()
@@ -238,12 +256,56 @@ void errorState()
 {
     turnAllRelays(RELAY_OFF);
 
-    // Wait for wash switch toggle
+    // Display appropriate error message if not already displayed
+    if (!errorMessageDisplayed)
+    {
+        switch (currentError)
+        {
+        case TIMEOUT_ERROR:
+            displayErrorMessage("Mixing Timeout");
+            break;
+        case HOPPER_LOW_ERROR:
+            displayErrorMessage("Hopper Low!");
+            break;
+        default:
+            displayErrorMessage("Unknown Error");
+            break;
+        }
+    }
+
+    // Wait for wash switch toggle to clear error
     if (digitalRead(washStandbyPin) == SWITCH_ON)
     {
-        timeoutOccurred = false;       // Clear the timeout flag
-        errorMessageDisplayed = false; // Reset the display flag
+        timeoutOccurred = false;
+        errorMessageDisplayed = false;
+        currentError = NO_ERROR;
         updateState(IDLE);
+    }
+}
+
+// Helper function for hopper updates
+void updateHopperLevel()
+{
+    if (millis() - lastHopperUpdate >= HOPPER_UPDATE_INTERVAL)
+    {
+        char hopperLevel[8];
+        snprintf(hopperLevel, sizeof(hopperLevel), "%d", hopperSensor.getPercentage());
+        mqttClient.publish(MQTT_HOPPER_TOPIC, hopperLevel);
+        lastHopperUpdate = millis();
+
+        // Update LCD with hopper level
+        lcd.setCursor(0, 1);
+        lcd.print("Hopper: ");
+        lcd.print(hopperLevel);
+        lcd.print("%    ");
+
+        // Check hopper level
+        if (hopperSensor.isLow() && currentState != WASH && currentState != ERROR)
+        {
+            currentError = HOPPER_LOW_ERROR;
+            displayErrorMessage("Hopper Low!");
+            updateState(ERROR);
+        }
     }
 }
 
