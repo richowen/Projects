@@ -3,6 +3,7 @@
 #include "home_assistant.h"
 #include "hopper_sensor.h"
 #include <WiFi.h>
+#include "lcd_manager.h"
 
 // *** Constants and Global Variables ***
 
@@ -31,7 +32,9 @@ enum State
     POST_MIXING,
     WASH,
     ERROR
-}; // System states
+}; 
+
+// System states
 State currentState = IDLE; // Initial state
 
 enum ErrorType
@@ -75,10 +78,8 @@ void mixingtimout();
 bool isLevelReached();
 void updateHopperLevel();
 
-// LCD Helper Functions
-void setLCDColor(int r, int g, int b);
-void displayMessage(const char *message);
-void displayErrorMessage(const char *errorMessage);
+// Create LCDManager instance
+LCDManager lcdManager;
 
 // Create hopper sensor instance
 HopperSensor hopperSensor;
@@ -108,15 +109,13 @@ void setup()
     // Initialize Home Assistant integration
     setupHomeAssistant();
 
+    // Initialize the LCD
+    lcdManager.begin();
+    lcdManager.updateDisplay("IDLE", 0);
+    Serial.println("LCD initialized.");
+
     // Initialize hopper sensor
     hopperSensor.begin();
-
-    // Initialize the LCD
-    lcd.init();
-    setLCDColor(0, 255, 0); // Set initial backlight color to green
-    lcd.clear();
-    lcd.print("Milk Mixer Ready");
-    Serial.println("LCD initialized.");
 
     // Set relay pins as outputs
     pinMode(mixerPin, OUTPUT);
@@ -300,15 +299,23 @@ void errorState()
         switch (currentError)
         {
         case TIMEOUT_ERROR:
-            displayErrorMessage("Mixing Timeout");
+            lcdManager.showError("Mixing Timeout");
             break;
         case HOPPER_LOW_ERROR:
-            displayErrorMessage("Hopper Low!");
+            lcdManager.showError("Hopper Low!");
             break;
         default:
-            displayErrorMessage("Unknown Error");
+            lcdManager.showError("Unknown Error");
             break;
         }
+        errorMessageDisplayed = true;
+
+        // Create error message for Home Assistant
+        char fullMessage[100];
+        snprintf(fullMessage, sizeof(fullMessage), "ERROR: %s", 
+            currentError == TIMEOUT_ERROR ? "Mixing Timeout" :
+            currentError == HOPPER_LOW_ERROR ? "Hopper Low!" : "Unknown Error");
+        updateHomeAssistant(fullMessage);
     }
 
     // Wait for wash switch toggle to clear error
@@ -323,31 +330,34 @@ void errorState()
 
 // *** Helper Functions ***
 
-void updateHopperLevel()
-{
-    if (millis() - lastHopperUpdate >= HOPPER_UPDATE_INTERVAL)
-    {
+void updateHopperLevel() {
+    if (millis() - lastHopperUpdate >= HOPPER_UPDATE_INTERVAL) {
+        int hopperPercent = hopperSensor.getPercentage();
         char hopperLevel[8];
-        snprintf(hopperLevel, sizeof(hopperLevel), "%d", hopperSensor.getPercentage());
+        snprintf(hopperLevel, sizeof(hopperLevel), "%d", hopperPercent);
         mqttClient.publish(MQTT_HOPPER_TOPIC, hopperLevel);
         lastHopperUpdate = millis();
 
-        // Update LCD with hopper level
-        lcd.setCursor(0, 1);
-        lcd.print("Hopper: ");
-        lcd.print(hopperLevel);
-        lcd.print("%    ");
+        // Update LCD with current state and hopper level
+        const char* stateStr;
+        switch (currentState) {
+            case IDLE: stateStr = "IDLE"; break;
+            case MIXING: stateStr = "MIXING"; break;
+            case POST_MIXING: stateStr = "POST-MIX"; break;
+            case WASH: stateStr = "WASH"; break;
+            case ERROR: stateStr = "ERROR"; break;
+            default: stateStr = "UNKNOWN"; break;
+        }
+        lcdManager.updateDisplay(stateStr, hopperPercent);
 
         // Check hopper level
-        if (hopperSensor.isLow() && currentState != WASH && currentState != ERROR)
-        {
+        if (hopperSensor.isLow() && currentState != WASH && currentState != ERROR) {
             currentError = HOPPER_LOW_ERROR;
-            displayErrorMessage("Hopper Low!");
+            lcdManager.showError("Hopper Low!");
             updateState(ERROR);
         }
     }
 }
-
 // Relay Control Functions
 void turnAllRelays(uint8_t state)
 {
@@ -358,93 +368,53 @@ void turnAllRelays(uint8_t state)
 }
 
 // Function to update the current state and print state change if necessary
-void updateState(State newState)
-{
-    if (newState != currentState)
-    {
+void updateState(State newState) {
+    if (newState != currentState) {
         currentState = newState;
-        errorMessageDisplayed = false; // Reset the flag on state change
+        errorMessageDisplayed = false;
 
         // Convert state to string for Home Assistant
-        const char *stateStr;
-        switch (currentState)
-        {
-        case IDLE:
-            stateStr = "idle";
-            break;
-        case MIXING:
-            stateStr = "mixing";
-            break;
-        case POST_MIXING:
-            stateStr = "post_mixing";
-            break;
-        case WASH:
-            stateStr = "wash";
-            break;
-        case ERROR:
-            stateStr = "error";
-            break;
-        default:
-            stateStr = "unknown";
-            break;
+        const char* stateStr;
+        const char* displayStr;
+        switch (currentState) {
+            case IDLE:
+                stateStr = "idle";
+                displayStr = "IDLE";
+                break;
+            case MIXING:
+                stateStr = "mixing";
+                displayStr = "MIXING";
+                break;
+            case POST_MIXING:
+                stateStr = "post_mixing";
+                displayStr = "POST-MIX";
+                break;
+            case WASH:
+                stateStr = "wash";
+                displayStr = "WASH";
+                break;
+            case ERROR:
+                stateStr = "error";
+                displayStr = "ERROR";
+                break;
+            default:
+                stateStr = "unknown";
+                displayStr = "UNKNOWN";
+                break;
         }
 
         // Update Home Assistant
         updateHomeAssistant(stateStr);
-
+        
+        // Update LCD color and state
+        lcdManager.setStateColor(displayStr);
+        
+        // The regular display update will happen in updateHopperLevel()
         Serial.print("State changed to: ");
-        switch (currentState)
-        {
-        case IDLE:
-            Serial.println("IDLE");
-            break;
-        case MIXING:
-            Serial.println("MIXING");
-            break;
-        case POST_MIXING:
-            Serial.println("POST_MIXING");
-            break;
-        case WASH:
-            Serial.println("WASH");
-            break;
-        case ERROR:
-            Serial.println("ERROR");
-            break;
-        }
-
-        // Update LCD Display
-        lcd.clear();
-        lcd.setCursor(0, 0);
-
-        switch (currentState)
-        {
-        case IDLE:
-            setLCDColor(0, 255, 0); // Green
-            lcd.print("State: IDLE     ");
-            break;
-        case MIXING:
-            setLCDColor(0, 0, 255); // Blue
-            lcd.print("State: MIXING   ");
-            break;
-        case POST_MIXING:
-            setLCDColor(0, 255, 255); // Cyan
-            lcd.print("State: POST-MIX ");
-            break;
-        case WASH:
-            setLCDColor(255, 165, 0); // Orange
-            lcd.print("State: WASH     ");
-            break;
-        case ERROR:
-            setLCDColor(255, 0, 0); // Red
-            lcd.print("State: ERROR    ");
-            break;
-        default:
-            setLCDColor(255, 0, 0); // Red
-            lcd.print("UNKNOWN STATE   ");
-            break;
-        }
+        Serial.println(displayStr);
     }
 }
+
 
 // Liquid Level Function with Aggressive Debouncing
 bool isLevelReached()
@@ -469,27 +439,9 @@ bool isLevelReached()
     return debouncedLevelState == SWITCH_ON;
 }
 
-// LCD Helper Functions
-void setLCDColor(int r, int g, int b)
-{
-    lcd.setRGB(r, g, b);
-}
-
-void displayMessage(const char *message)
-{
-    lcd.clear();
-    lcd.print(message);
-}
-
-void displayErrorMessage(const char *errorMessage)
-{
-    if (!errorMessageDisplayed)
-    {
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print(errorMessage);
-        lcd.setCursor(0, 1);
-        lcd.print("Toggle WashSwtch");
+void displayErrorMessage(const char* errorMessage) {
+    if (!errorMessageDisplayed) {
+        lcdManager.showError(errorMessage);
         errorMessageDisplayed = true;
 
         // Create error message for Home Assistant
