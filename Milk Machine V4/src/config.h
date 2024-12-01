@@ -7,13 +7,16 @@
 // Pin Definitions
 #define MIXER_PIN         16    // Mixer motor relay
 #define WATER_PIN         17    // Water dispenser relay
-#define AUGER_PIN         25    // Powder auger relay
+#define AUGER_PIN        25    // Powder auger relay
 #define AGITATOR_PIN      26    // Powder agitator relay
 #define WASH_STANDBY_PIN  23    // Wash standby switch
 #define WASH_DISPENSE_PIN 5     // Water solenoid activate switch in wash mode
 #define LIQUID_LEVEL_PIN  12    // Liquid level pressure switch
 #define AUGER_CURRENT_PIN 34    // Auger motor current sensor
 #define MIXER_CURRENT_PIN 35    // Mixer motor current sensor
+
+// Feature Flags
+#define ENABLE_CURRENT_SENSING false  // Set to false to disable current sensing
 
 // Relay States (Active LOW relays)
 #define RELAY_ON    LOW

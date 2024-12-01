@@ -9,7 +9,6 @@
 
 // State Definitions
 enum State {
-    INIT,           // Added initialization state
     IDLE,
     MIXING,
     POST_MIXING,
@@ -23,25 +22,27 @@ enum ErrorCode {
     TIMEOUT_ERROR = 1,
     MOTOR_CURRENT_ERROR = 2,
     WATER_PRESSURE_ERROR = 3,
-    EMPTY_HOPPER_ERROR = 4,
-    CALIBRATION_ERROR = 5  // Added calibration error
+    EMPTY_HOPPER_ERROR = 4
 };
 
 // System states
-State currentState = INIT;  // Start in INIT state
+State currentState = IDLE;  // Initial state
 ErrorCode currentError = NO_ERROR;
 
 // Timing Variables
 unsigned long postMixingStart = 0;
-bool timeoutOccurred = false;
-bool errorMessageDisplayed = false;
-unsigned long mixingStart = 0;
-unsigned long lastCurrentCheck = 0;
-unsigned long idleStart = 0;
+bool timeoutOccurred = false;                       // Flag to indicate timeout
+bool errorMessageDisplayed = false;                 // Flag to prevent multiple error messages
+unsigned long mixingStart = 0;                      // Start time for mixing state
+unsigned long lastCurrentCheck = 0;                 // Last time current was checked
+unsigned long idleStart = 0;                        // Start time for idle state
 
 // Debounce Variables
-unsigned long lastLevelChangeTime = 0;
-bool debouncedLevelState = false;
+unsigned long lastLevelChangeTime = 0;    // Last time the level state changed
+bool debouncedLevelState = false;         // Debounced level state
+
+// LCD Configuration
+DFRobot_RGBLCD1602 lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
 // Create instances of our managers
 LCDManager lcdManager;
@@ -54,33 +55,13 @@ void mixingState();
 void postMixingState();
 void washState();
 void errorState();
-void initState();
 void turnAllRelays(uint8_t state);
 void updateState(State newState);
+void mixingtimout();
 bool isLevelReached();
 void updateDisplay();
 void logSystemError(ErrorCode error, const char* message);
 void checkMotorCurrents();
-
-// Helper function to handle millis() overflow
-unsigned long getElapsedTime(unsigned long start) {
-    return (long)(millis() - start);
-}
-
-// Power-on state determination
-State determineInitialState() {
-    // Check if we're recovering from an error
-    if (sysMonitor.getLastError() != NO_ERROR) {
-        return ERROR;
-    }
-    
-    // Check liquid level to determine if mixing needed
-    if (!isLevelReached()) {
-        return MIXING;
-    }
-    
-    return IDLE;
-}
 
 // *** Main Setup Function ***
 
@@ -88,17 +69,38 @@ void setup() {
     // Initialize Serial communication
     Serial.begin(9600);
 
-    // Initialize system monitor first for error logging
-    if (!sysMonitor.begin()) {
-        Serial.println("Failed to initialize system monitor!");
-        while(1) { delay(1000); }  // Halt if critical initialization fails
+    // Initialize system monitor
+    sysMonitor.begin();
+
+    // Initialize motor monitor
+    motorMonitor.begin();
+
+    // Wifi setup
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.config(STATIC_IP, GATEWAY, SUBNET);
+    WiFi.setHostname(HOSTNAME);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.println("Connecting to WiFi...");
     }
 
-    // Set pin modes before anything else
+    Serial.println("Connected to WiFi.");
+
+    // Initialize Home Assistant integration
+    setupHomeAssistant();
+
+    // Initialize the LCD
+    lcdManager.begin();
+    lcdManager.updateDisplay("IDLE", -1);  // -1 indicates no hopper level
+    Serial.println("LCD initialized.");
+
+    // Set relay pins as outputs
     pinMode(MIXER_PIN, OUTPUT);
     pinMode(WATER_PIN, OUTPUT);
     pinMode(AUGER_PIN, OUTPUT);
     pinMode(AGITATOR_PIN, OUTPUT);
+
+    // Set switch pins as inputs with pull-up resistors
     pinMode(WASH_STANDBY_PIN, INPUT_PULLUP);
     pinMode(WASH_DISPENSE_PIN, INPUT_PULLUP);
     pinMode(LIQUID_LEVEL_PIN, INPUT_PULLUP);
@@ -106,48 +108,8 @@ void setup() {
     // Initialize all relays to OFF state
     turnAllRelays(RELAY_OFF);
 
-    // Initialize LCD with retry mechanism
-    for (int retry = 0; retry < 3; retry++) {
-        lcdManager.begin();
-        delay(100);  // Give LCD time to initialize
-        lcdManager.tryDisplay("Testing LCD", "Please Wait...");
-        if (lcdManager.isInitialized()) {
-            break;
-        }
-    }
-    
-    if (!lcdManager.isInitialized()) {
-        Serial.println("Failed to initialize LCD!");
-        logSystemError(CALIBRATION_ERROR, "LCD initialization failed");
-        while(1) { delay(1000); }  // Halt if LCD fails
-    }
-
-    // Initialize motor monitor
-    if (!motorMonitor.begin()) {
-        logSystemError(CALIBRATION_ERROR, "Motor monitor initialization failed");
-        lcdManager.showError("Motor Init Fail");
-        while(1) { delay(1000); }  // Halt if motor monitor fails
-    }
-
-    // Initialize WiFi with timeout
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    WiFi.config(STATIC_IP, GATEWAY, SUBNET);
-    WiFi.setHostname(HOSTNAME);
-    
-    unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (getElapsedTime(wifiStart) > 30000) { // 30 second timeout
-            Serial.println("WiFi connection timeout");
-            break;  // Continue without WiFi
-        }
-        delay(500);
-        Serial.println("Connecting to WiFi...");
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("Connected to WiFi.");
-        setupHomeAssistant();
-    }
+    // Initial debug output
+    Serial.println("System Initialized. Starting in IDLE state.");
 
     // Initialize debounce variables
     debouncedLevelState = false;
@@ -156,10 +118,11 @@ void setup() {
     // Set initial idle start time
     idleStart = millis();
 
-    // Determine and set initial state
-    updateState(determineInitialState());
-    
-    Serial.println("System Initialized.");
+    // Calibrate motor current baselines if enabled
+    if (ENABLE_CURRENT_SENSING) {
+        delay(1000);  // Wait for power to stabilize
+        motorMonitor.calibrateBaseline();
+    }
 }
 
 // *** Main Loop Function ***
@@ -171,19 +134,19 @@ void loop() {
     // Update system statistics
     sysMonitor.updateStats();
 
-    // Update motor current readings
-    motorMonitor.update();
+    // Update motor current readings if enabled
+    if (ENABLE_CURRENT_SENSING) {
+        motorMonitor.update();
 
-    // Check motor currents periodically
-    if (getElapsedTime(lastCurrentCheck) >= CURRENT_CHECK_INTERVAL) {
-        checkMotorCurrents();
-        lastCurrentCheck = millis();
+        // Check motor currents periodically
+        if (millis() - lastCurrentCheck >= CURRENT_CHECK_INTERVAL) {
+            checkMotorCurrents();
+            lastCurrentCheck = millis();
+        }
     }
 
-    // Handle Home Assistant MQTT connection if WiFi is connected
-    if (WiFi.status() == WL_CONNECTED) {
-        loopHomeAssistant();
-    }
+    // Handle Home Assistant MQTT connection
+    loopHomeAssistant();
 
     // Check wash standby switch and handle state transitions
     if (digitalRead(WASH_STANDBY_PIN) == SWITCH_ON && currentState != WASH) {
@@ -192,9 +155,6 @@ void loop() {
 
     // Update current state based on liquid level and wash switches
     switch (currentState) {
-        case INIT:
-            initState();
-            break;
         case IDLE:
             idleState();
             break;
@@ -218,19 +178,6 @@ void loop() {
 
 // *** State Functions ***
 
-void initState() {
-    // Perform any initialization tasks
-    turnAllRelays(RELAY_OFF);
-    
-    // Calibrate motor current baselines
-    if (motorMonitor.calibrateBaseline()) {
-        updateState(determineInitialState());
-    } else {
-        logSystemError(CALIBRATION_ERROR, "Motor calibration failed");
-        updateState(ERROR);
-    }
-}
-
 void idleState() {
     static bool mixerRunning = false;
     static unsigned long mixerStartTime = 0;
@@ -250,14 +197,14 @@ void idleState() {
     // Handle periodic mixing
     if (!mixerRunning) {
         // Start a mixing cycle if interval has elapsed
-        if (getElapsedTime(idleStart) >= MIX_INTERVAL) {
+        if (millis() - idleStart >= MIX_INTERVAL) {
             digitalWrite(MIXER_PIN, RELAY_ON);
             mixerStartTime = millis();
             mixerRunning = true;
         }
     } else {
         // Check if mixing duration is complete
-        if (getElapsedTime(mixerStartTime) >= IDLE_MIX_DURATION) {
+        if (millis() - mixerStartTime >= IDLE_MIX_DURATION) {
             digitalWrite(MIXER_PIN, RELAY_OFF);
             mixerRunning = false;
             idleStart = millis();  // Reset the interval timer
@@ -274,7 +221,7 @@ void mixingState() {
     }
 
     // Check for timeout
-    if (getElapsedTime(mixingStart) >= MIXING_TIMEOUT) {
+    if ((millis() - mixingStart) >= MIXING_TIMEOUT) {
         timeoutOccurred = true;
         currentError = TIMEOUT_ERROR;
         logSystemError(TIMEOUT_ERROR, ERROR_MSG_TIMEOUT);
@@ -285,8 +232,8 @@ void mixingState() {
 
     turnAllRelays(RELAY_ON);
 
-    // Check for empty hopper
-    if (motorMonitor.isHopperEmpty()) {
+    // Check for empty hopper only if current sensing is enabled
+    if (ENABLE_CURRENT_SENSING && motorMonitor.isHopperEmpty()) {
         currentError = EMPTY_HOPPER_ERROR;
         logSystemError(EMPTY_HOPPER_ERROR, ERROR_MSG_HOPPER);
         updateState(ERROR);
@@ -314,7 +261,7 @@ void postMixingState() {
     digitalWrite(AUGER_PIN, RELAY_OFF);
     digitalWrite(AGITATOR_PIN, RELAY_OFF);
 
-    if (getElapsedTime(postMixingStart) >= POST_MIXING_DURATION) {
+    if (millis() - postMixingStart >= POST_MIXING_DURATION) {
         updateState(IDLE);
     }
 }
@@ -352,9 +299,6 @@ void errorState() {
             case EMPTY_HOPPER_ERROR:
                 errorMsg = ERROR_MSG_HOPPER;
                 break;
-            case CALIBRATION_ERROR:
-                errorMsg = "Calibration Err";
-                break;
             default:
                 errorMsg = ERROR_MSG_UNKNOWN;
                 break;
@@ -366,9 +310,7 @@ void errorState() {
         // Create error message for Home Assistant
         char fullMessage[100];
         snprintf(fullMessage, sizeof(fullMessage), "ERROR: %s", errorMsg);
-        if (WiFi.status() == WL_CONNECTED) {
-            updateHomeAssistant(fullMessage);
-        }
+        updateHomeAssistant(fullMessage);
     }
 
     // Wait for wash switch toggle to clear error
@@ -376,15 +318,15 @@ void errorState() {
         timeoutOccurred = false;
         errorMessageDisplayed = false;
         currentError = NO_ERROR;
-        updateState(INIT);  // Go through initialization again
+        updateState(IDLE);
     }
 }
 
 // *** Helper Functions ***
 
 void checkMotorCurrents() {
-    // Only check currents when motors are running
-    if (currentState == MIXING || currentState == POST_MIXING) {
+    // Only check currents when motors are running and current sensing is enabled
+    if (ENABLE_CURRENT_SENSING && (currentState == MIXING || currentState == POST_MIXING)) {
         // Check for mixer motor overload
         if (motorMonitor.isMixerOverload()) {
             currentError = MOTOR_CURRENT_ERROR;
@@ -406,7 +348,6 @@ void updateDisplay() {
     // Update LCD with current state
     const char* stateStr;
     switch (currentState) {
-        case INIT: stateStr = "INIT"; break;
         case IDLE: stateStr = "IDLE"; break;
         case MIXING: stateStr = "MIXING"; break;
         case POST_MIXING: stateStr = "POST-MIX"; break;
@@ -418,10 +359,8 @@ void updateDisplay() {
     // Update display with state only
     lcdManager.updateDisplay(stateStr, -1);
 
-    // Update Home Assistant if connected
-    if (WiFi.status() == WL_CONNECTED) {
-        updateHomeAssistant(stateStr);
-    }
+    // Update Home Assistant with state
+    updateHomeAssistant(stateStr);
 }
 
 // Relay Control Functions
@@ -442,10 +381,6 @@ void updateState(State newState) {
         const char* stateStr;
         const char* displayStr;
         switch (currentState) {
-            case INIT:
-                stateStr = "init";
-                displayStr = "INIT";
-                break;
             case IDLE:
                 stateStr = "idle";
                 displayStr = "IDLE";
@@ -472,10 +407,8 @@ void updateState(State newState) {
                 break;
         }
 
-        // Update Home Assistant if connected
-        if (WiFi.status() == WL_CONNECTED) {
-            updateHomeAssistant(stateStr);
-        }
+        // Update Home Assistant
+        updateHomeAssistant(stateStr);
         
         // Update LCD color and state
         lcdManager.setStateColor(displayStr);
@@ -494,7 +427,7 @@ bool isLevelReached() {
         lastLevelChangeTime = millis();  // Reset the debounce timer
     }
 
-    if (getElapsedTime(lastLevelChangeTime) >= DEBOUNCE_DELAY) {
+    if ((millis() - lastLevelChangeTime) >= DEBOUNCE_DELAY) {
         if (currentRawLevelState != debouncedLevelState) {
             debouncedLevelState = currentRawLevelState;
         }
@@ -509,4 +442,3 @@ void logSystemError(ErrorCode error, const char* message) {
     snprintf(fullMessage, sizeof(fullMessage), "[%lu] %s", millis(), message);
     sysMonitor.logError(static_cast<uint8_t>(error), fullMessage);
 }
-

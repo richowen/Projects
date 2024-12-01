@@ -16,7 +16,7 @@ public:
     {
     }
 
-    bool begin() {
+    void begin() {
         // Configure ADC
         analogReadResolution(12);  // 12-bit resolution (0-4095)
         analogSetAttenuation(ADC_11db);  // Set to 11dB attenuation for full 0-3.3V range
@@ -25,53 +25,28 @@ public:
         _augerBaseline = 0;
         _mixerBaseline = 0;
         _calibrated = false;
-
-        // Verify pins are valid ADC pins
-        if (!_verifyPins()) {
-            return false;
-        }
-
-        return true;
     }
 
     // Calibrate baseline current when motors are off
-    bool calibrateBaseline() {
+    void calibrateBaseline() {
         _augerMedian.clear();
         _mixerMedian.clear();
 
         // Take 100 samples to establish baseline
         for(int i = 0; i < 100; i++) {
-            int augerReading = analogRead(_augerCurrentPin);
-            int mixerReading = analogRead(_mixerCurrentPin);
-            
-            // Verify readings are valid
-            if (augerReading < 0 || augerReading > 4095 || 
-                mixerReading < 0 || mixerReading > 4095) {
-                return false;
-            }
-            
-            _augerMedian.add(augerReading);
-            _mixerMedian.add(mixerReading);
+            _augerMedian.add(analogRead(_augerCurrentPin));
+            _mixerMedian.add(analogRead(_mixerCurrentPin));
             delay(10);
         }
 
         _augerBaseline = _augerMedian.getMedian();
         _mixerBaseline = _mixerMedian.getMedian();
-        
-        // Verify baselines are reasonable
-        if (_augerBaseline < 0 || _augerBaseline > 4095 ||
-            _mixerBaseline < 0 || _mixerBaseline > 4095) {
-            return false;
-        }
-
         _calibrated = true;
 
         Serial.print("Baseline values - Auger: ");
         Serial.print(_augerBaseline);
         Serial.print(" Mixer: ");
         Serial.println(_mixerBaseline);
-
-        return true;
     }
 
     // Update current readings
@@ -139,16 +114,6 @@ private:
     bool _calibrated;
     uint8_t _lowCurrentCount = 0;
     uint8_t _highCurrentCount = 0;
-
-    bool _verifyPins() {
-        // ESP32 ADC1 pins: 32-39
-        // ESP32 ADC2 pins: 0,2,4,12-15,25-27
-        if ((_augerCurrentPin >= 32 && _augerCurrentPin <= 39) ||
-            (_mixerCurrentPin >= 32 && _mixerCurrentPin <= 39)) {
-            return true;
-        }
-        return false;
-    }
 
     // Convert ADC reading to current in amps using ACS712
     float getCurrentDraw(int reading, int baseline) {
