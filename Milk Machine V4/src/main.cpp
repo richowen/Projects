@@ -1,32 +1,14 @@
 #include <Arduino.h>
 #include "DFRobot_RGBLCD1602.h"
 #include "home_assistant.h"
-#include "hopper_sensor.h"
 #include <WiFi.h>
 #include "lcd_manager.h"
-
-// *** Constants and Global Variables ***
-
-// Pin Definitions
-const int mixerPin = 16;       // Mixer motor relay
-const int waterPin = 17;       // Water dispenser relay
-const int augerPin = 25;       // Powder auger relay
-const int agitatorPin = 26;    // Powder agitator relay
-const int washStandbyPin = 23; // Wash standby switch
-const int washDispensePin = 5; // Water solenoid activate switch in wash mode
-const int liquidLevelPin = 12; // Liquid level pressure switch
-
-// Relay States
-const uint8_t RELAY_ON = LOW; // Active LOW relays
-const uint8_t RELAY_OFF = HIGH;
-
-// Reversed Switch States
-const uint8_t SWITCH_ON = HIGH; // Switch connected to VCC when ON (open)
-const uint8_t SWITCH_OFF = LOW; // Pulled LOW when OFF (closed)
+#include "system_monitor.h"
+#include "motor_monitor.h"
+#include "config.h"
 
 // State Definitions
-enum State
-{
+enum State {
     IDLE,
     MIXING,
     POST_MIXING,
@@ -34,37 +16,38 @@ enum State
     ERROR
 }; 
 
-// System states
-State currentState = IDLE; // Initial state
-
-enum ErrorType
-{
-    NO_ERROR,
-    TIMEOUT_ERROR,
-    HOPPER_LOW_ERROR
+// Error Codes
+enum ErrorCode {
+    NO_ERROR = 0,
+    TIMEOUT_ERROR = 1,
+    MOTOR_CURRENT_ERROR = 2,
+    WATER_PRESSURE_ERROR = 3,
+    EMPTY_HOPPER_ERROR = 4
 };
-ErrorType currentError = NO_ERROR;
+
+// System states
+State currentState = IDLE;  // Initial state
+ErrorCode currentError = NO_ERROR;
 
 // Timing Variables
 unsigned long postMixingStart = 0;
-const unsigned long postMixingDuration = 5000;     // 5 seconds
-unsigned long mixingStart = 0;                     // Start time for mixing state
-const unsigned long mixingTimeout = 60000;         // 60 seconds
-bool timeoutOccurred = false;                      // Flag to indicate timeout
-bool errorMessageDisplayed = false;                // Flag to prevent multiple error messages
-unsigned long lastHopperUpdate = 0;                // Last time hopper level was updated
-const unsigned long HOPPER_UPDATE_INTERVAL = 1000; // 1 second in milliseconds
-unsigned long idleStart = 0;                       // Start time for idle state
-const unsigned long MIX_INTERVAL = 300000;         // 5 minutes of idle time
-const unsigned long IDLE_MIX_DURATION = 5000;      // 5 seconds of mixing
+bool timeoutOccurred = false;                       // Flag to indicate timeout
+bool errorMessageDisplayed = false;                 // Flag to prevent multiple error messages
+unsigned long mixingStart = 0;                      // Start time for mixing state
+unsigned long lastCurrentCheck = 0;                 // Last time current was checked
+unsigned long idleStart = 0;                        // Start time for idle state
 
 // Debounce Variables
-const unsigned long debounceDelay = 500; // Aggressive debounce delay in milliseconds
-unsigned long lastLevelChangeTime = 0;   // Last time the level state changed
-bool debouncedLevelState = false;        // Debounced level state
+unsigned long lastLevelChangeTime = 0;    // Last time the level state changed
+bool debouncedLevelState = false;         // Debounced level state
 
 // LCD Configuration
-DFRobot_RGBLCD1602 lcd(0x2D, 16, 2); // I2C address 0x2D, 16x2 display
+DFRobot_RGBLCD1602 lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
+
+// Create instances of our managers
+LCDManager lcdManager;
+SystemMonitor sysMonitor;
+MotorMonitor motorMonitor(AUGER_CURRENT_PIN, MIXER_CURRENT_PIN);
 
 // Function Declarations
 void idleState();
@@ -76,30 +59,27 @@ void turnAllRelays(uint8_t state);
 void updateState(State newState);
 void mixingtimout();
 bool isLevelReached();
-void updateHopperLevel();
-
-// Create LCDManager instance
-LCDManager lcdManager;
-
-// Create hopper sensor instance
-HopperSensor hopperSensor;
+void updateDisplay();
+void logSystemError(ErrorCode error, const char* message);
+void checkMotorCurrents();
 
 // *** Main Setup Function ***
 
-void setup()
-{
+void setup() {
     // Initialize Serial communication
     Serial.begin(9600);
 
+    // Initialize system monitor
+    sysMonitor.begin();
+
+    // Initialize motor monitor
+    motorMonitor.begin();
+
     // Wifi setup
-    WiFi.begin("WiFi", "Gliders1!");
-    IPAddress staticIP(192, 168, 1, 5);
-    IPAddress gateway(192, 168, 1, 1);
-    IPAddress subnet(255, 255, 255, 0);
-    WiFi.setHostname("Milk_Machine");
-    WiFi.config(staticIP, gateway, subnet);
-    while (WiFi.status() != WL_CONNECTED)
-    {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.config(STATIC_IP, GATEWAY, SUBNET);
+    WiFi.setHostname(HOSTNAME);
+    while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.println("Connecting to WiFi...");
     }
@@ -111,22 +91,19 @@ void setup()
 
     // Initialize the LCD
     lcdManager.begin();
-    lcdManager.updateDisplay("IDLE", 0);
+    lcdManager.updateDisplay("IDLE", -1);  // -1 indicates no hopper level
     Serial.println("LCD initialized.");
 
-    // Initialize hopper sensor
-    hopperSensor.begin();
-
     // Set relay pins as outputs
-    pinMode(mixerPin, OUTPUT);
-    pinMode(waterPin, OUTPUT);
-    pinMode(augerPin, OUTPUT);
-    pinMode(agitatorPin, OUTPUT);
+    pinMode(MIXER_PIN, OUTPUT);
+    pinMode(WATER_PIN, OUTPUT);
+    pinMode(AUGER_PIN, OUTPUT);
+    pinMode(AGITATOR_PIN, OUTPUT);
 
     // Set switch pins as inputs with pull-up resistors
-    pinMode(washStandbyPin, INPUT_PULLUP);
-    pinMode(washDispensePin, INPUT_PULLUP);
-    pinMode(liquidLevelPin, INPUT_PULLUP);
+    pinMode(WASH_STANDBY_PIN, INPUT_PULLUP);
+    pinMode(WASH_DISPENSE_PIN, INPUT_PULLUP);
+    pinMode(LIQUID_LEVEL_PIN, INPUT_PULLUP);
 
     // Initialize all relays to OFF state
     turnAllRelays(RELAY_OFF);
@@ -134,54 +111,65 @@ void setup()
     // Initial debug output
     Serial.println("System Initialized. Starting in IDLE state.");
 
-    // Display initial state on LCD
-    lcd.setCursor(0, 1);
-    lcd.print("State: IDLE     ");
-
     // Initialize debounce variables
     debouncedLevelState = false;
     lastLevelChangeTime = millis();
 
     // Set initial idle start time
     idleStart = millis();
+
+    // Calibrate motor current baselines
+    delay(1000);  // Wait for power to stabilize
+    motorMonitor.calibrateBaseline();
 }
 
 // *** Main Loop Function ***
 
-// Main Loop
-void loop()
-{
+void loop() {
+    // Feed the watchdog
+    sysMonitor.feedWatchdog();
+
+    // Update system statistics
+    sysMonitor.updateStats();
+
+    // Update motor current readings
+    motorMonitor.update();
+
+    // Check motor currents periodically
+    if (millis() - lastCurrentCheck >= CURRENT_CHECK_INTERVAL) {
+        checkMotorCurrents();
+        lastCurrentCheck = millis();
+    }
+
     // Handle Home Assistant MQTT connection
     loopHomeAssistant();
 
     // Check wash standby switch and handle state transitions
-    if (digitalRead(washStandbyPin) == SWITCH_ON && currentState != WASH)
-    {
+    if (digitalRead(WASH_STANDBY_PIN) == SWITCH_ON && currentState != WASH) {
         updateState(WASH);
     }
 
     // Update current state based on liquid level and wash switches
-    switch (currentState)
-    {
-    case IDLE:
-        idleState();
-        break;
-    case MIXING:
-        mixingState();
-        break;
-    case POST_MIXING:
-        postMixingState();
-        break;
-    case WASH:
-        washState();
-        break;
-    case ERROR:
-        errorState();
-        break;
+    switch (currentState) {
+        case IDLE:
+            idleState();
+            break;
+        case MIXING:
+            mixingState();
+            break;
+        case POST_MIXING:
+            postMixingState();
+            break;
+        case WASH:
+            washState();
+            break;
+        case ERROR:
+            errorState();
+            break;
     }
 
-    // Update hopper level readings and display
-    updateHopperLevel();
+    // Update display
+    updateDisplay();
 }
 
 // *** State Functions ***
@@ -206,121 +194,123 @@ void idleState() {
     if (!mixerRunning) {
         // Start a mixing cycle if interval has elapsed
         if (millis() - idleStart >= MIX_INTERVAL) {
-            digitalWrite(mixerPin, RELAY_ON);
+            digitalWrite(MIXER_PIN, RELAY_ON);
             mixerStartTime = millis();
             mixerRunning = true;
         }
     } else {
         // Check if mixing duration is complete
         if (millis() - mixerStartTime >= IDLE_MIX_DURATION) {
-            digitalWrite(mixerPin, RELAY_OFF);
+            digitalWrite(MIXER_PIN, RELAY_OFF);
             mixerRunning = false;
             idleStart = millis();  // Reset the interval timer
         }
     }
 }
 
-void mixingState()
-{
+void mixingState() {
     static bool initializeTimer = true;
-    if (initializeTimer)
-    {
+    if (initializeTimer) {
         mixingStart = millis();
         initializeTimer = false;
         timeoutOccurred = false;
     }
 
     // Check for timeout
-    if ((millis() - mixingStart) >= mixingTimeout)
-    {
+    if ((millis() - mixingStart) >= MIXING_TIMEOUT) {
         timeoutOccurred = true;
         currentError = TIMEOUT_ERROR;
+        logSystemError(TIMEOUT_ERROR, ERROR_MSG_TIMEOUT);
         updateState(ERROR);
         initializeTimer = true;
         return;
     }
 
     turnAllRelays(RELAY_ON);
-    if (isLevelReached())
-    {
+
+    // Check for empty hopper
+    if (motorMonitor.isHopperEmpty()) {
+        currentError = EMPTY_HOPPER_ERROR;
+        logSystemError(EMPTY_HOPPER_ERROR, ERROR_MSG_HOPPER);
+        updateState(ERROR);
+        return;
+    }
+
+    if (isLevelReached()) {
+        sysMonitor.recordMix();  // Record successful mix
         updateState(POST_MIXING);
         postMixingStart = millis();
-        initializeTimer = true; // Reset for next time
+        initializeTimer = true;  // Reset for next time
     }
 }
 
-void postMixingState()
-{
+void postMixingState() {
     // First check liquid level - highest priority
-    if (!isLevelReached())
-    {
+    if (!isLevelReached()) {
         updateState(MIXING);
-        return; // Exit immediately to handle the low level
+        return;  // Exit immediately to handle the low level
     }
 
     // If level is OK, continue with normal post-mixing behavior
-    digitalWrite(mixerPin, RELAY_ON);
-    digitalWrite(waterPin, RELAY_OFF);
-    digitalWrite(augerPin, RELAY_OFF);
-    digitalWrite(agitatorPin, RELAY_OFF);
+    digitalWrite(MIXER_PIN, RELAY_ON);
+    digitalWrite(WATER_PIN, RELAY_OFF);
+    digitalWrite(AUGER_PIN, RELAY_OFF);
+    digitalWrite(AGITATOR_PIN, RELAY_OFF);
 
-    if (millis() - postMixingStart >= postMixingDuration)
-    {
+    if (millis() - postMixingStart >= POST_MIXING_DURATION) {
         updateState(IDLE);
     }
 }
 
-void washState()
-{
+void washState() {
     turnAllRelays(RELAY_OFF);
 
-    if (digitalRead(washDispensePin) == SWITCH_ON)
-    {
-        digitalWrite(waterPin, RELAY_ON); // Dispense water
-    }
-    else
-    {
-        digitalWrite(waterPin, RELAY_OFF); // Turn off water dispenser
+    if (digitalRead(WASH_DISPENSE_PIN) == SWITCH_ON) {
+        digitalWrite(WATER_PIN, RELAY_ON);  // Dispense water
+    } else {
+        digitalWrite(WATER_PIN, RELAY_OFF);  // Turn off water dispenser
     }
 
-    if (digitalRead(washStandbyPin) == SWITCH_OFF)
-    {
+    if (digitalRead(WASH_STANDBY_PIN) == SWITCH_OFF) {
         updateState(IDLE);
     }
 }
 
-void errorState()
-{
+void errorState() {
     turnAllRelays(RELAY_OFF);
 
     // Display appropriate error message if not already displayed
-    if (!errorMessageDisplayed)
-    {
-        switch (currentError)
-        {
-        case TIMEOUT_ERROR:
-            lcdManager.showError("Mixing Timeout");
-            break;
-        case HOPPER_LOW_ERROR:
-            lcdManager.showError("Hopper Low!");
-            break;
-        default:
-            lcdManager.showError("Unknown Error");
-            break;
+    if (!errorMessageDisplayed) {
+        const char* errorMsg;
+        switch (currentError) {
+            case TIMEOUT_ERROR:
+                errorMsg = ERROR_MSG_TIMEOUT;
+                break;
+            case MOTOR_CURRENT_ERROR:
+                errorMsg = ERROR_MSG_MOTOR;
+                break;
+            case WATER_PRESSURE_ERROR:
+                errorMsg = ERROR_MSG_WATER;
+                break;
+            case EMPTY_HOPPER_ERROR:
+                errorMsg = ERROR_MSG_HOPPER;
+                break;
+            default:
+                errorMsg = ERROR_MSG_UNKNOWN;
+                break;
         }
+        
+        lcdManager.showError(errorMsg);
         errorMessageDisplayed = true;
 
         // Create error message for Home Assistant
         char fullMessage[100];
-        snprintf(fullMessage, sizeof(fullMessage), "ERROR: %s", 
-            currentError == TIMEOUT_ERROR ? "Mixing Timeout" :
-            currentError == HOPPER_LOW_ERROR ? "Hopper Low!" : "Unknown Error");
+        snprintf(fullMessage, sizeof(fullMessage), "ERROR: %s", errorMsg);
         updateHomeAssistant(fullMessage);
     }
 
     // Wait for wash switch toggle to clear error
-    if (digitalRead(washStandbyPin) == SWITCH_ON)
-    {
+    if (digitalRead(WASH_STANDBY_PIN) == SWITCH_ON) {
         timeoutOccurred = false;
         errorMessageDisplayed = false;
         currentError = NO_ERROR;
@@ -330,41 +320,51 @@ void errorState()
 
 // *** Helper Functions ***
 
-void updateHopperLevel() {
-    if (millis() - lastHopperUpdate >= HOPPER_UPDATE_INTERVAL) {
-        int hopperPercent = hopperSensor.getPercentage();
-        char hopperLevel[8];
-        snprintf(hopperLevel, sizeof(hopperLevel), "%d", hopperPercent);
-        mqttClient.publish(MQTT_HOPPER_TOPIC, hopperLevel);
-        lastHopperUpdate = millis();
-
-        // Update LCD with current state and hopper level
-        const char* stateStr;
-        switch (currentState) {
-            case IDLE: stateStr = "IDLE"; break;
-            case MIXING: stateStr = "MIXING"; break;
-            case POST_MIXING: stateStr = "POST-MIX"; break;
-            case WASH: stateStr = "WASH"; break;
-            case ERROR: stateStr = "ERROR"; break;
-            default: stateStr = "UNKNOWN"; break;
-        }
-        lcdManager.updateDisplay(stateStr, hopperPercent);
-
-        // Check hopper level
-        if (hopperSensor.isLow() && currentState != WASH && currentState != ERROR) {
-            currentError = HOPPER_LOW_ERROR;
-            lcdManager.showError("Hopper Low!");
+void checkMotorCurrents() {
+    // Only check currents when motors are running
+    if (currentState == MIXING || currentState == POST_MIXING) {
+        // Check for mixer motor overload
+        if (motorMonitor.isMixerOverload()) {
+            currentError = MOTOR_CURRENT_ERROR;
+            logSystemError(MOTOR_CURRENT_ERROR, ERROR_MSG_MOTOR);
             updateState(ERROR);
+            return;
         }
+
+        // Log current values for diagnostics
+        Serial.print("Currents - Auger: ");
+        Serial.print(motorMonitor.getAugerCurrent());
+        Serial.print("A, Mixer: ");
+        Serial.print(motorMonitor.getMixerCurrent());
+        Serial.println("A");
     }
 }
+
+void updateDisplay() {
+    // Update LCD with current state
+    const char* stateStr;
+    switch (currentState) {
+        case IDLE: stateStr = "IDLE"; break;
+        case MIXING: stateStr = "MIXING"; break;
+        case POST_MIXING: stateStr = "POST-MIX"; break;
+        case WASH: stateStr = "WASH"; break;
+        case ERROR: stateStr = "ERROR"; break;
+        default: stateStr = "UNKNOWN"; break;
+    }
+    
+    // Update display with state only
+    lcdManager.updateDisplay(stateStr, -1);
+
+    // Update Home Assistant with state
+    updateHomeAssistant(stateStr);
+}
+
 // Relay Control Functions
-void turnAllRelays(uint8_t state)
-{
-    digitalWrite(mixerPin, state);
-    digitalWrite(waterPin, state);
-    digitalWrite(augerPin, state);
-    digitalWrite(agitatorPin, state);
+void turnAllRelays(uint8_t state) {
+    digitalWrite(MIXER_PIN, state);
+    digitalWrite(WATER_PIN, state);
+    digitalWrite(AUGER_PIN, state);
+    digitalWrite(AGITATOR_PIN, state);
 }
 
 // Function to update the current state and print state change if necessary
@@ -409,28 +409,22 @@ void updateState(State newState) {
         // Update LCD color and state
         lcdManager.setStateColor(displayStr);
         
-        // The regular display update will happen in updateHopperLevel()
         Serial.print("State changed to: ");
         Serial.println(displayStr);
     }
 }
 
-
 // Liquid Level Function with Aggressive Debouncing
-bool isLevelReached()
-{
+bool isLevelReached() {
     static bool lastRawLevelState = SWITCH_OFF;
-    bool currentRawLevelState = digitalRead(liquidLevelPin);
+    bool currentRawLevelState = digitalRead(LIQUID_LEVEL_PIN);
 
-    if (currentRawLevelState != lastRawLevelState)
-    {
-        lastLevelChangeTime = millis(); // Reset the debounce timer
+    if (currentRawLevelState != lastRawLevelState) {
+        lastLevelChangeTime = millis();  // Reset the debounce timer
     }
 
-    if ((millis() - lastLevelChangeTime) >= debounceDelay)
-    {
-        if (currentRawLevelState != debouncedLevelState)
-        {
+    if ((millis() - lastLevelChangeTime) >= DEBOUNCE_DELAY) {
+        if (currentRawLevelState != debouncedLevelState) {
             debouncedLevelState = currentRawLevelState;
         }
     }
@@ -439,14 +433,8 @@ bool isLevelReached()
     return debouncedLevelState == SWITCH_ON;
 }
 
-void displayErrorMessage(const char* errorMessage) {
-    if (!errorMessageDisplayed) {
-        lcdManager.showError(errorMessage);
-        errorMessageDisplayed = true;
-
-        // Create error message for Home Assistant
-        char fullMessage[100];
-        snprintf(fullMessage, sizeof(fullMessage), "ERROR: %s", errorMessage);
-        updateHomeAssistant(fullMessage);
-    }
+void logSystemError(ErrorCode error, const char* message) {
+    char fullMessage[100];
+    snprintf(fullMessage, sizeof(fullMessage), "[%lu] %s", millis(), message);
+    sysMonitor.logError(static_cast<uint8_t>(error), fullMessage);
 }

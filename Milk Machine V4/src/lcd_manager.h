@@ -3,24 +3,32 @@
 #define LCD_MANAGER_H
 
 #include "DFRobot_RGBLCD1602.h"
+#include "config.h"
 
 class LCDManager {
 public:
-    LCDManager(uint8_t address = 0x2D) : lcd(address, 16, 2) {}
+    LCDManager(uint8_t address = LCD_ADDRESS) : lcd(address, LCD_COLS, LCD_ROWS) {}
     
     void begin() {
         lcd.init();
-        setColor(0, 255, 0);  // Default green
+        setColor(COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B);  // Default green
         lcd.clear();
     }
     
-    // Update the main display with state and hopper level
+    // Update the main display with state
     void updateDisplay(const char* state, int hopperLevel) {
-        // Only update if content would change
         char newTopLine[17];
         char newBottomLine[17];
+        
+        // Format top line with state
         snprintf(newTopLine, sizeof(newTopLine), "State: %-9s", state);
-        snprintf(newBottomLine, sizeof(newBottomLine), "Hopper: %d%%    ", hopperLevel);
+        
+        // Format bottom line with mix count if available
+        if (hopperLevel == -1) {
+            snprintf(newBottomLine, sizeof(newBottomLine), "Ready          ");
+        } else {
+            snprintf(newBottomLine, sizeof(newBottomLine), "Hopper: %d%%    ", hopperLevel);
+        }
         
         if (strcmp(newTopLine, currentTopLine) != 0 || strcmp(newBottomLine, currentBottomLine) != 0) {
             lcd.clear();
@@ -48,15 +56,15 @@ public:
     
     void setStateColor(const char* state) {
         if (strcmp(state, "IDLE") == 0) {
-            setColor(0, 255, 0);  // Green
+            setColor(COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B);  // Green
         } else if (strcmp(state, "MIXING") == 0) {
-            setColor(0, 0, 255);  // Blue
+            setColor(COLOR_MIXING_R, COLOR_MIXING_G, COLOR_MIXING_B);  // Blue
         } else if (strcmp(state, "POST-MIX") == 0) {
-            setColor(0, 255, 255);  // Cyan
+            setColor(COLOR_POST_MIX_R, COLOR_POST_MIX_G, COLOR_POST_MIX_B);  // Cyan
         } else if (strcmp(state, "WASH") == 0) {
-            setColor(255, 165, 0);  // Orange
+            setColor(COLOR_WASH_R, COLOR_WASH_G, COLOR_WASH_B);  // Orange
         } else if (strcmp(state, "ERROR") == 0) {
-            setColor(255, 0, 0);  // Red
+            setColor(COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B);  // Red
         }
     }
 
