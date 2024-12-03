@@ -7,12 +7,13 @@
 
 class LCDManager {
 public:
-    LCDManager(uint8_t address = LCD_ADDRESS) : lcd(address, LCD_COLS, LCD_ROWS) {}
+    LCDManager() : lcd(0x7c>>1, LCD_COLS, LCD_ROWS) {}
     
     void begin() {
         lcd.init();
-        setColor(COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B);  // Default green
+        delay(100);  // Give LCD time to initialize
         lcd.clear();
+        setColor(COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B);
     }
     
     // Update the main display with state
@@ -66,6 +67,14 @@ public:
         } else if (strcmp(state, "ERROR") == 0) {
             setColor(COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B);  // Red
         }
+    }
+
+    void tryDisplay(const char* line1, const char* line2) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(line1);
+        lcd.setCursor(0, 1);
+        lcd.print(line2);
     }
 
 private:

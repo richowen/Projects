@@ -51,7 +51,6 @@
 #define HOSTNAME        "Milk_Machine"
 
 // LCD Configuration
-#define LCD_ADDRESS     0x2D
 #define LCD_COLS        16
 #define LCD_ROWS        2
 
