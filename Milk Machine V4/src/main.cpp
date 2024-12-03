@@ -36,16 +36,14 @@ bool errorMessageDisplayed = false;                 // Flag to prevent multiple 
 unsigned long mixingStart = 0;                      // Start time for mixing state
 unsigned long lastCurrentCheck = 0;                 // Last time current was checked
 unsigned long idleStart = 0;                        // Start time for idle state
+unsigned long lastStatsUpdate = 0;                  // Last time stats were updated to HA
 
 // Debounce Variables
 unsigned long lastLevelChangeTime = 0;    // Last time the level state changed
 bool debouncedLevelState = false;         // Debounced level state
 
-// LCD Configuration
-DFRobot_RGBLCD1602 lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
-
 // Create instances of our managers
-LCDManager lcdManager;
+LCDManager lcdManager(0x2D);  // Pass the correct I2C address
 SystemMonitor sysMonitor;
 MotorMonitor motorMonitor(AUGER_CURRENT_PIN, MIXER_CURRENT_PIN);
 
@@ -91,7 +89,7 @@ void setup() {
 
     // Initialize the LCD
     lcdManager.begin();
-    lcdManager.updateDisplay("IDLE", -1);  // -1 indicates no hopper level
+    lcdManager.updateDisplay("IDLE");  // Initialize display with IDLE state
     Serial.println("LCD initialized.");
 
     // Set relay pins as outputs
@@ -133,6 +131,17 @@ void loop() {
 
     // Update system statistics
     sysMonitor.updateStats();
+
+    // Update Home Assistant stats every minute
+    if (millis() - lastStatsUpdate >= 60000) {  // Every minute
+        updateHomeAssistantStats(
+            sysMonitor.getTotalMixes(),
+            sysMonitor.getTotalRuntime(),
+            sysMonitor.getErrorCount(),
+            sysMonitor.getCurrentUptime()
+        );
+        lastStatsUpdate = millis();
+    }
 
     // Update motor current readings if enabled
     if (ENABLE_CURRENT_SENSING) {
@@ -356,8 +365,8 @@ void updateDisplay() {
         default: stateStr = "UNKNOWN"; break;
     }
     
-    // Update display with state only
-    lcdManager.updateDisplay(stateStr, -1);
+    // Update display with state
+    lcdManager.updateDisplay(stateStr);
 
     // Update Home Assistant with state
     updateHomeAssistant(stateStr);

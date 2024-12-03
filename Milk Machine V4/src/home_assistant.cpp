@@ -66,3 +66,33 @@ void updateHomeAssistant(const char *state)
         Serial.println("Failed to update Home Assistant: not connected.");
     }
 }
+
+void updateHomeAssistantStats(uint32_t totalMixes, uint32_t totalRuntime, uint32_t errorCount, uint32_t currentUptime)
+{
+    if (mqttClient.connected())
+    {
+        char buffer[16];  // Buffer for converting numbers to strings
+
+        // Publish total mixes
+        itoa(totalMixes, buffer, 10);
+        mqttClient.publish(MQTT_TOTAL_MIXES_TOPIC, buffer);
+
+        // Publish total runtime (in hours)
+        float runtimeHours = totalRuntime / 3600.0;  // Convert seconds to hours
+        dtostrf(runtimeHours, 4, 1, buffer);  // Convert float to string with 1 decimal place
+        mqttClient.publish(MQTT_TOTAL_RUNTIME_TOPIC, buffer);
+
+        // Publish error count
+        itoa(errorCount, buffer, 10);
+        mqttClient.publish(MQTT_ERROR_COUNT_TOPIC, buffer);
+
+        // Publish current uptime (in hours)
+        float uptimeHours = currentUptime / 3600.0;  // Convert seconds to hours
+        dtostrf(uptimeHours, 4, 1, buffer);  // Convert float to string with 1 decimal place
+        mqttClient.publish(MQTT_UPTIME_TOPIC, buffer);
+    }
+    else
+    {
+        Serial.println("Failed to update Home Assistant stats: not connected.");
+    }
+}

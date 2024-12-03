@@ -7,28 +7,31 @@
 
 class LCDManager {
 public:
-    LCDManager(uint8_t address = LCD_ADDRESS) : lcd(address, LCD_COLS, LCD_ROWS) {}
+    LCDManager(uint8_t address) : lcd(address, LCD_COLS, LCD_ROWS) {}
     
     void begin() {
         lcd.init();
         setColor(COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B);  // Default green
         lcd.clear();
+        Serial.println("LCD initialized!");
+        
+        // Test the display
+        lcd.setCursor(0, 0);
+        lcd.print("LCD Test");
+        lcd.setCursor(0, 1);
+        lcd.print("Initializing...");
+        delay(1000);  // Show test message briefly
+        lcd.clear();
     }
     
     // Update the main display with state
-    void updateDisplay(const char* state, int hopperLevel) {
+    void updateDisplay(const char* state) {
         char newTopLine[17];
         char newBottomLine[17];
         
         // Format top line with state
         snprintf(newTopLine, sizeof(newTopLine), "State: %-9s", state);
-        
-        // Format bottom line with mix count if available
-        if (hopperLevel == -1) {
-            snprintf(newBottomLine, sizeof(newBottomLine), "Ready          ");
-        } else {
-            snprintf(newBottomLine, sizeof(newBottomLine), "Hopper: %d%%    ", hopperLevel);
-        }
+        snprintf(newBottomLine, sizeof(newBottomLine), "Ready          ");
         
         if (strcmp(newTopLine, currentTopLine) != 0 || strcmp(newBottomLine, currentBottomLine) != 0) {
             lcd.clear();
