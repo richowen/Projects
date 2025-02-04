@@ -1,0 +1,10 @@
+{
+	"folders": [],
+	"settings": {
+		"condasync.Environment Path": "C:\\tools\\Anaconda3\\envs\\audio"
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": []
+	}
+}

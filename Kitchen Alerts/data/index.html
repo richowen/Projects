@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kitchen Alerts System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 10px;
+            border: none;
+            border-radius: 4px;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: #45a049;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Kitchen Alerts System</h1>
+    
+    <div class="status" id="statusDiv">
+        Loading status...
+    </div>
+
+    <h2>Trigger Alerts</h2>
+    <button class="button" onclick="triggerAlert('alert')">Normal Alert</button>
+    <button class="button" onclick="triggerAlert('quick')">Quick Alert</button>
+    <button class="button" onclick="triggerAlert('urgent')">Urgent Alert</button>
+    <button class="button" onclick="triggerAlert('silent')">Silent Alert</button>
+    <button class="button" onclick="triggerAlert('sound')">Sound Only</button>
+
+    <h2>System</h2>
+    <a href="/update" class="button">OTA Update</a>
+
+    <script>
+        function updateStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    let html = `
+                        <strong>WiFi Connected:</strong> ${data.wifi_connected}<br>
+                        <strong>IP Address:</strong> ${data.ip_address}<br>
+                        <strong>Signal Strength:</strong> ${data.rssi} dBm
+                    `;
+                    document.getElementById('statusDiv').innerHTML = html;
+                })
+                .catch(error => {
+                    document.getElementById('statusDiv').innerHTML = 'Error fetching status';
+                });
+        }
+
+        function triggerAlert(type) {
+            fetch(`/trigger?event=${type}`)
+                .then(response => response.text())
+                .then(data => console.log(data))
+                .catch(error => console.error('Error:', error));
+        }
+
+        // Update status every 5 seconds
+        updateStatus();
+        setInterval(updateStatus, 5000);
+    </script>
+</body>
+</html>
