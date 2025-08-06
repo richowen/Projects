@@ -34,12 +34,14 @@ const int CURRENT_SENSOR = 35;   // ACS712 analog input
 // Constants
 const float EMPTY_CURRENT_THRESHOLD = 0.2;  // Amps - adjust based on your motor
 const float MAX_CURRENT_THRESHOLD = 2.0;   // Amps - adjust based on your motor
-const unsigned long MIXING_TIMEOUT = 600000; // 1 minutes max mixing time
+const unsigned long MIXING_TIMEOUT = 60000; // 1 minutes max mixing time
 const unsigned long POST_MIX_TIME = 5000;   // 5 seconds post-mix time
 const unsigned long ERROR_RETRY_DELAY = 300000; // 5 minutes between retries
 const unsigned long CURRENT_REPORT_INTERVAL = 1000; // Report current every second
-const unsigned long WATCHDOG_INTERVAL = 500;  // Check system every 500ms
+const unsigned long WATCHDOG_INTERVAL = 100;  // Check system every 100ms
 const unsigned long LCD_UPDATE_INTERVAL = 500; // Update LCD every 500ms
+const unsigned long LEVEL_DEBOUNCE_TIME = 1000; // 1 second debounce for level switch
+const unsigned long MQTT_RECONNECT_TIMEOUT = 10000; // 10 second MQTT timeout
 
 // System States
 enum SystemState {
@@ -64,12 +66,18 @@ SystemState currentState = IDLE;
 ErrorType currentError = NO_ERROR;
 unsigned long mixingStartTime = 0;
 unsigned long postMixStartTime = 0;
+unsigned long errorStartTime = 0;
 unsigned long lastCurrentReport = 0;
 unsigned long lastWatchdogCheck = 0;
 unsigned long lastLCDUpdate = 0;
+unsigned long lastMQTTAttempt = 0;
+unsigned long levelSwitchDebounceStart = 0;
 bool levelSwitchLastState = false;
-int levelSwitchStableCount = 0;
+bool levelSwitchStable = false;
 float lastCurrentReading = 0.0;
+bool currentSensorCalibrated = false;
+String lastLCDLine1 = "";
+String lastLCDLine2 = "";
 
 // Objects
 WiFiClient espClient;
@@ -89,6 +97,7 @@ void handleError(ErrorType error);
 void watchdogCheck();
 void reportCurrent();
 void updateLCD();
+bool timeElapsed(unsigned long start, unsigned long interval);
 
 void setup() {
     Serial.begin(115200);
@@ -121,8 +130,27 @@ void setup() {
     mqtt.setServer(mqtt_server, mqtt_port);
     mqtt.setCallback(handleMQTTMessage);
     
-    // Initialize current sensor
+    // Initialize current sensor with validation
+    lcd.clear();
+    lcd.print("Calibrating...");
+    lcd.setCursor(0, 1);
+    lcd.print("Current Sensor");
+    
     currentSensor.autoMidPoint();
+    delay(1000); // Allow sensor to stabilize
+    
+    // Validate calibration
+    float testReading = currentSensor.mA_DC() / 1000.0;
+    if (testReading > -10.0 && testReading < 10.0) { // Reasonable range check
+        currentSensorCalibrated = true;
+        lcd.setCursor(0, 1);
+        lcd.print("Sensor OK       ");
+    } else {
+        currentSensorCalibrated = false;
+        lcd.setCursor(0, 1);
+        lcd.print("Sensor Error!   ");
+    }
+    delay(1000);
     
     // Report initial status
     mqtt.publish(availability_topic, "online", true);
@@ -159,19 +187,19 @@ void loop() {
     mqtt.loop();
 
     // Regular current reporting
-    if (millis() - lastCurrentReport >= CURRENT_REPORT_INTERVAL) {
+    if (timeElapsed(lastCurrentReport, CURRENT_REPORT_INTERVAL)) {
         reportCurrent();
         lastCurrentReport = millis();
     }
 
     // LCD updates
-    if (millis() - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
+    if (timeElapsed(lastLCDUpdate, LCD_UPDATE_INTERVAL)) {
         updateLCD();
         lastLCDUpdate = millis();
     }
 
     // Watchdog checks
-    if (millis() - lastWatchdogCheck >= WATCHDOG_INTERVAL) {
+    if (timeElapsed(lastWatchdogCheck, WATCHDOG_INTERVAL)) {
         watchdogCheck();
         lastWatchdogCheck = millis();
     }
@@ -186,39 +214,39 @@ void loop() {
             // Nothing to do in idle state
             break;
             
-        case MIXING:
-            if (millis() - mixingStartTime > MIXING_TIMEOUT) {
+        case MIXING: {
+            if (timeElapsed(mixingStartTime, MIXING_TIMEOUT)) {
                 handleError(TIMEOUT_ERROR);
                 break;
             }
             
             checkCurrentDraw();
             
-            if (digitalRead(LEVEL_SWITCH) == LOW) {  // Level reached
-                // Debounce level switch
-                if (!levelSwitchLastState) {
-                    levelSwitchStableCount++;
-                    if (levelSwitchStableCount >= 5) { // Must be stable for 2.5 seconds
-                        currentState = POST_MIXING;
-                        postMixStartTime = millis();
-                        
-                        // Turn off all except mixer
-                        digitalWrite(RELAY_AUGER, HIGH);
-                        digitalWrite(RELAY_AGITATOR, HIGH);
-                        digitalWrite(RELAY_WATER, HIGH);
-                        
-                        levelSwitchStableCount = 0;
-                        reportStatus();
-                    }
+            // Level switch debouncing with time-based approach
+            bool currentLevelState = digitalRead(LEVEL_SWITCH) == LOW;
+            if (currentLevelState != levelSwitchLastState) {
+                levelSwitchDebounceStart = millis();
+                levelSwitchStable = false;
+                levelSwitchLastState = currentLevelState;
+            } else if (!levelSwitchStable && timeElapsed(levelSwitchDebounceStart, LEVEL_DEBOUNCE_TIME)) {
+                levelSwitchStable = true;
+                if (currentLevelState) { // Level reached and stable
+                    currentState = POST_MIXING;
+                    postMixStartTime = millis();
+                    
+                    // Turn off all except mixer
+                    digitalWrite(RELAY_AUGER, HIGH);
+                    digitalWrite(RELAY_AGITATOR, HIGH);
+                    digitalWrite(RELAY_WATER, HIGH);
+                    
+                    reportStatus();
                 }
-            } else {
-                levelSwitchStableCount = 0;
             }
-            levelSwitchLastState = (digitalRead(LEVEL_SWITCH) == LOW);
             break;
+        }
             
         case POST_MIXING:
-            if (millis() - postMixStartTime >= POST_MIX_TIME) {
+            if (timeElapsed(postMixStartTime, POST_MIX_TIME)) {
                 stopMixing();
                 currentState = IDLE;
                 reportStatus();
@@ -226,7 +254,7 @@ void loop() {
             break;
             
         case ERROR:
-            if (millis() - mixingStartTime > ERROR_RETRY_DELAY) {
+            if (timeElapsed(errorStartTime, ERROR_RETRY_DELAY)) {
                 currentState = IDLE;
                 currentError = NO_ERROR;
                 reportStatus();
@@ -236,135 +264,146 @@ void loop() {
 }
 
 void updateLCD() {
-    String displayText;
-    int remainingTime = 0;
+    String line1, line2;
     char currentStr[8];
+    static SystemState lastState = IDLE;
+    static ErrorType lastError = NO_ERROR;
     
-    lcd.clear();
-    
-    // Update LCD color based on state
-    switch (currentState) {
-        case IDLE:
-            lcd.setRGB(0, 0, 255); // Blue
-            break;
-        case MIXING:
-        case POST_MIXING:
-            lcd.setRGB(0, 255, 0); // Green
-            break;
-        case ERROR:
-            lcd.setRGB(255, 0, 0); // Red
-            break;
-        case WASH:
-            lcd.setRGB(0, 255, 255); // Cyan
-            break;
-    }
-    
-    // First line: State
-    lcd.setCursor(0, 0);
-    switch (currentState) {
-        case IDLE:
-            displayText = "Status: IDLE";
-            break;
-        case MIXING:
-            displayText = "Status: MIXING";
-            break;
-        case POST_MIXING:
-            remainingTime = (POST_MIX_TIME - (millis() - postMixStartTime)) / 1000;
-            displayText = "Post-Mix: " + String(remainingTime) + "s";
-            break;
-        case ERROR:
-            displayText = "ERROR";
-            break;
-        case WASH:
-            displayText = "WASH MODE";
-            break;
-    }
-    lcd.print(displayText);
-    
-    // Second line: Current reading or error message
-    lcd.setCursor(0, 1);
-    if (currentState == ERROR) {
-        switch (currentError) {
-            case EMPTY_POWDER:
-                displayText = "Empty Powder!";
+    // Update LCD color only when state changes
+    if (currentState != lastState) {
+        switch (currentState) {
+            case IDLE:
+                lcd.setRGB(0, 0, 255); // Blue
                 break;
-            case TIMEOUT_ERROR:
-                displayText = "Timeout Error!";
+            case MIXING:
+            case POST_MIXING:
+                lcd.setRGB(0, 255, 0); // Green
                 break;
-            case MOTOR_OVERLOAD:
-                displayText = "Motor Overload!";
+            case ERROR:
+                lcd.setRGB(255, 0, 0); // Red
                 break;
-            case LEVEL_SWITCH_ERROR:
-                displayText = "Level Sw Error!";
+            case WASH:
+                lcd.setRGB(0, 255, 255); // Cyan
                 break;
-            default:
-                displayText = "Unknown Error!";
         }
-        lcd.print(displayText);
-    } else if (currentState == MIXING || currentState == POST_MIXING) {
-        dtostrf(lastCurrentReading, 1, 1, currentStr);
-        displayText = "Current: " + String(currentStr) + "A";
-        lcd.print(displayText);
-    } else if (currentState == WASH) {
-        lcd.print(digitalRead(WASH_DISPENSE_PIN) == LOW ? "Water: ON" : "Water: OFF");
-    } else {
-        lcd.print("Ready to Start");
+        lastState = currentState;
+    }
+    
+    // Build display content
+    switch (currentState) {
+        case IDLE:
+            line1 = "Status: IDLE";
+            line2 = "Ready to Start";
+            break;
+        case MIXING:
+            line1 = "Status: MIXING";
+            dtostrf(lastCurrentReading, 1, 1, currentStr);
+            line2 = "Current: " + String(currentStr) + "A";
+            break;
+        case POST_MIXING: {
+            int remainingTime = (POST_MIX_TIME - (millis() - postMixStartTime)) / 1000;
+            line1 = "Post-Mix: " + String(remainingTime) + "s";
+            dtostrf(lastCurrentReading, 1, 1, currentStr);
+            line2 = "Current: " + String(currentStr) + "A";
+            break;
+        }
+        case ERROR:
+            line1 = "ERROR";
+            switch (currentError) {
+                case EMPTY_POWDER:
+                    line2 = "Empty Powder!";
+                    break;
+                case TIMEOUT_ERROR:
+                    line2 = "Timeout Error!";
+                    break;
+                case MOTOR_OVERLOAD:
+                    line2 = "Motor Overload!";
+                    break;
+                case LEVEL_SWITCH_ERROR:
+                    line2 = "Level Sw Error!";
+                    break;
+                default:
+                    line2 = "Unknown Error!";
+            }
+            break;
+        case WASH:
+            line1 = "WASH MODE";
+            line2 = digitalRead(WASH_DISPENSE_PIN) == LOW ? "Water: ON" : "Water: OFF";
+            break;
+    }
+    
+    // Only update if content changed
+    if (line1 != lastLCDLine1) {
+        lcd.setCursor(0, 0);
+        lcd.print("                "); // Clear line
+        lcd.setCursor(0, 0);
+        lcd.print(line1);
+        lastLCDLine1 = line1;
+    }
+    
+    if (line2 != lastLCDLine2) {
+        lcd.setCursor(0, 1);
+        lcd.print("                "); // Clear line
+        lcd.setCursor(0, 1);
+        lcd.print(line2);
+        lastLCDLine2 = line2;
     }
 }
 
 void setupWiFi() {
     lcd.clear();
     lcd.print("Connecting WiFi");
-    
+
     delay(10);
     Serial.println("Connecting to WiFi...");
     WiFi.begin(ssid, password);
-    
+
     int dots = 0;
-    while (WiFi.status() != WL_CONNECTED) {
+    unsigned long startAttemptTime = millis();
+    const unsigned long wifiTimeout = 10000; // 10 seconds
+
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < wifiTimeout) {
         delay(500);
         Serial.print(".");
         lcd.setCursor(dots, 1);
         lcd.print(".");
         dots = (dots + 1) % 16;
     }
-    
-    Serial.println("\nWiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-    
-    lcd.clear();
-    lcd.print("WiFi Connected");
-    lcd.setCursor(0, 1);
-    lcd.print(WiFi.localIP());
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\nWiFi connected");
+        Serial.println("IP address: ");
+        Serial.println(WiFi.localIP());
+
+        lcd.clear();
+        lcd.print("WiFi Connected");
+        lcd.setCursor(0, 1);
+        lcd.print(WiFi.localIP());
+    } else {
+        Serial.println("\nWiFi connection failed");
+        lcd.clear();
+        lcd.print("WiFi Failed");
+    }
+
     delay(2000);
 }
 
 void reconnectMQTT() {
-    while (!mqtt.connected()) {
-        Serial.println("Attempting MQTT connection...");
-        lcd.clear();
-        lcd.print("Connecting MQTT");
-        
-        String clientId = "MilkMixer-";
-        clientId += String(random(0xffff), HEX);
-        
-        if (mqtt.connect(clientId.c_str(), mqtt_user, mqtt_password, availability_topic, 1, true, "offline")) {
-            Serial.println("MQTT connected");
-            mqtt.subscribe(command_topic);
-            mqtt.publish(availability_topic, "online", true);
-            reportStatus();
-            
-            lcd.clear();
-            lcd.print("MQTT Connected");
-            delay(1000);
-        } else {
-            Serial.println("MQTT connection failed, retrying in 5 seconds");
-            lcd.setCursor(0, 1);
-            lcd.print("Failed, retry...");
-            delay(5000);
-        }
+    if (!timeElapsed(lastMQTTAttempt, MQTT_RECONNECT_TIMEOUT)) return;
+    
+    Serial.println("Attempting MQTT connection...");
+    String clientId = "MilkMixer-";
+    clientId += String(random(0xffff), HEX);
+    
+    if (mqtt.connect(clientId.c_str(), mqtt_user, mqtt_password, availability_topic, 1, true, "offline")) {
+        Serial.println("MQTT connected");
+        mqtt.subscribe(command_topic);
+        mqtt.publish(availability_topic, "online", true);
+        reportStatus();
+    } else {
+        Serial.println("MQTT connection failed");
     }
+    lastMQTTAttempt = millis();
 }
 
 void handleMQTTMessage(char* topic, byte* payload, unsigned int length) {
@@ -378,7 +417,7 @@ void handleMQTTMessage(char* topic, byte* payload, unsigned int length) {
             startMixing();
         } else if (message == "stop") {
             stopMixing();
-}
+        }
     }
 }
 
@@ -430,11 +469,18 @@ void reportCurrent() {
 }
 
 void checkCurrentDraw() {
+    if (!currentSensorCalibrated) return; // Skip if sensor not calibrated
+    
     float current = currentSensor.mA_DC() / 1000.0; // Convert mA to A
+    
+    // Validate reading is reasonable
+    if (current < -50.0 || current > 50.0) return; // Skip invalid readings
+    
     lastCurrentReading = current;
     
-    // Check for empty powder (low current)
-    if (current < EMPTY_CURRENT_THRESHOLD && currentState == MIXING) {
+    // Check for empty powder (low current) - only after motor has had time to start
+    if (current < EMPTY_CURRENT_THRESHOLD && currentState == MIXING && 
+        timeElapsed(mixingStartTime, 5000)) { // Wait 5 seconds after start
         handleError(EMPTY_POWDER);
     }
     
@@ -455,8 +501,9 @@ void startMixing() {
     
     currentState = MIXING;
     mixingStartTime = millis();
-    levelSwitchStableCount = 0;
+    levelSwitchDebounceStart = 0;
     levelSwitchLastState = false;
+    levelSwitchStable = false;
     reportStatus();
 }
 
@@ -493,11 +540,12 @@ void handleError(ErrorType error) {
             break;
         default:
             errorMessage = "Unknown error";
+            break;
     }
     
     mqtt.publish(error_topic, errorMessage.c_str(), true);
     reportStatus();
-    mixingStartTime = millis(); // Start error timeout
+    errorStartTime = millis(); // Start error timeout
 }
 
 void watchdogCheck() {
@@ -509,7 +557,7 @@ void watchdogCheck() {
     if (currentState == MIXING && currentLevelState == levelSwitchPrevState) {
         if (levelSwitchStuckTime == 0) {
             levelSwitchStuckTime = millis();
-        } else if (millis() - levelSwitchStuckTime > 60000) { // 1 minute stuck
+        } else if (timeElapsed(levelSwitchStuckTime, 60000)) { // 1 minute stuck
             handleError(LEVEL_SWITCH_ERROR);
             levelSwitchStuckTime = 0;
         }
@@ -517,4 +565,8 @@ void watchdogCheck() {
         levelSwitchStuckTime = 0;
     }
     levelSwitchPrevState = currentLevelState;
+}
+
+bool timeElapsed(unsigned long start, unsigned long interval) {
+    return (millis() - start) >= interval;
 }
