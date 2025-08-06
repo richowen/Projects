@@ -42,6 +42,7 @@ const unsigned long WATCHDOG_INTERVAL = 100;  // Check system every 100ms
 const unsigned long LCD_UPDATE_INTERVAL = 500; // Update LCD every 500ms
 const unsigned long LEVEL_DEBOUNCE_TIME = 1000; // 1 second debounce for level switch
 const unsigned long MQTT_RECONNECT_TIMEOUT = 10000; // 10 second MQTT timeout
+const unsigned long WASH_TIMEOUT = 30000; // 30 second max water on time
 
 // System States
 enum SystemState {
@@ -72,8 +73,10 @@ unsigned long lastWatchdogCheck = 0;
 unsigned long lastLCDUpdate = 0;
 unsigned long lastMQTTAttempt = 0;
 unsigned long levelSwitchDebounceStart = 0;
+unsigned long washWaterStartTime = 0;
 bool levelSwitchLastState = false;
 bool levelSwitchStable = false;
+bool washWaterActive = false;
 float lastCurrentReading = 0.0;
 bool currentSensorCalibrated = false;
 String lastLCDLine1 = "";
@@ -152,9 +155,11 @@ void setup() {
     }
     delay(1000);
     
-    // Report initial status
-    mqtt.publish(availability_topic, "online", true);
-    reportStatus();
+    // Report initial status (only if MQTT is connected)
+    if (mqtt.connected()) {
+        mqtt.publish(availability_topic, "online", true);
+        reportStatus();
+    }
     
     // Update LCD after initialization
     lcd.clear();
@@ -170,14 +175,33 @@ void loop() {
             digitalWrite(RELAY_AUGER, HIGH);
             digitalWrite(RELAY_AGITATOR, HIGH);
             digitalWrite(RELAY_MIXER, HIGH);
+            washWaterActive = false;
             reportStatus();
         }
-        // Control water relay based on dispense switch
-        digitalWrite(RELAY_WATER, digitalRead(WASH_DISPENSE_PIN) == LOW ? LOW : HIGH);
+        
+        // Control water relay based on dispense switch with safety timeout
+        bool shouldActivateWater = digitalRead(WASH_DISPENSE_PIN) == LOW;
+        
+        if (shouldActivateWater && !washWaterActive) {
+            // Start water
+            digitalWrite(RELAY_WATER, LOW);
+            washWaterActive = true;
+            washWaterStartTime = millis();
+        } else if (!shouldActivateWater && washWaterActive) {
+            // Stop water
+            digitalWrite(RELAY_WATER, HIGH);
+            washWaterActive = false;
+        } else if (washWaterActive && timeElapsed(washWaterStartTime, WASH_TIMEOUT)) {
+            // Safety timeout - force water off
+            digitalWrite(RELAY_WATER, HIGH);
+            washWaterActive = false;
+            Serial.println("Wash mode safety timeout - water forced off");
+        }
     } else if (currentState == WASH) {
         // Exit wash mode
         currentState = IDLE;
         digitalWrite(RELAY_WATER, HIGH);
+        washWaterActive = false;
         reportStatus();
     }
 
@@ -395,13 +419,15 @@ void reconnectMQTT() {
     String clientId = "MilkMixer-";
     clientId += String(random(0xffff), HEX);
     
+    // Connect with Last Will Testament - if device disconnects unexpectedly, broker will publish "offline"
     if (mqtt.connect(clientId.c_str(), mqtt_user, mqtt_password, availability_topic, 1, true, "offline")) {
         Serial.println("MQTT connected");
         mqtt.subscribe(command_topic);
         mqtt.publish(availability_topic, "online", true);
         reportStatus();
     } else {
-        Serial.println("MQTT connection failed");
+        Serial.print("MQTT connection failed, rc=");
+        Serial.println(mqtt.state());
     }
     lastMQTTAttempt = millis();
 }
@@ -422,6 +448,8 @@ void handleMQTTMessage(char* topic, byte* payload, unsigned int length) {
 }
 
 void reportStatus() {
+    if (!mqtt.connected()) return; // Only publish if MQTT is connected
+    
     String status;
     switch (currentState) {
         case IDLE:
@@ -460,6 +488,8 @@ void reportStatus() {
 }
 
 void reportCurrent() {
+    if (!mqtt.connected()) return; // Only publish if MQTT is connected
+    
     if (currentState == MIXING || currentState == POST_MIXING) {
         lastCurrentReading = currentSensor.mA_DC() / 1000.0; // Convert mA to A
         char currentStr[10];
@@ -523,27 +553,29 @@ void handleError(ErrorType error) {
     currentState = ERROR;
     currentError = error;
     
-    // Report error via MQTT
-    String errorMessage;
-    switch (error) {
-        case EMPTY_POWDER:
-            errorMessage = "Powder hopper empty";
-            break;
-        case TIMEOUT_ERROR:
-            errorMessage = "Mixing timeout exceeded";
-            break;
-        case MOTOR_OVERLOAD:
-            errorMessage = "Motor overload detected";
-            break;
-        case LEVEL_SWITCH_ERROR:
-            errorMessage = "Level switch malfunction";
-            break;
-        default:
-            errorMessage = "Unknown error";
-            break;
+    // Report error via MQTT (only if connected)
+    if (mqtt.connected()) {
+        String errorMessage;
+        switch (error) {
+            case EMPTY_POWDER:
+                errorMessage = "Powder hopper empty";
+                break;
+            case TIMEOUT_ERROR:
+                errorMessage = "Mixing timeout exceeded";
+                break;
+            case MOTOR_OVERLOAD:
+                errorMessage = "Motor overload detected";
+                break;
+            case LEVEL_SWITCH_ERROR:
+                errorMessage = "Level switch malfunction";
+                break;
+            default:
+                errorMessage = "Unknown error";
+                break;
+        }
+        
+        mqtt.publish(error_topic, errorMessage.c_str(), true);
     }
-    
-    mqtt.publish(error_topic, errorMessage.c_str(), true);
     reportStatus();
     errorStartTime = millis(); // Start error timeout
 }
