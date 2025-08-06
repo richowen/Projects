@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ACS712.h>
+#include <ArduinoOTA.h>
 #include "DFRobot_RGBLCD1602.h"
 
 // WiFi credentials
@@ -130,6 +131,45 @@ void setup() {
     
     // Setup WiFi and MQTT
     setupWiFi();
+    
+    // Setup OTA updates (only if WiFi connected)
+    if (WiFi.status() == WL_CONNECTED) {
+        ArduinoOTA.setHostname("MilkMixer-OTA");
+        
+        ArduinoOTA.onStart([]() {
+            // Block OTA during active operations
+            if (currentState == MIXING || currentState == POST_MIXING) {
+                lcd.clear();
+                lcd.setRGB(255, 0, 0);
+                lcd.print("OTA Blocked");
+                lcd.setCursor(0, 1);
+                lcd.print("System Active");
+                return;
+            }
+            
+            lcd.clear();
+            lcd.setRGB(255, 255, 0); // Yellow for OTA
+            lcd.print("OTA Update...");
+            Serial.println("OTA Update Starting");
+        });
+        
+        ArduinoOTA.onEnd([]() {
+            lcd.setCursor(0, 1);
+            lcd.print("Complete!");
+            Serial.println("OTA Update Complete");
+        });
+        
+        ArduinoOTA.onError([](ota_error_t error) {
+            lcd.clear();
+            lcd.setRGB(255, 0, 0);
+            lcd.print("OTA Error!");
+            Serial.printf("OTA Error[%u]: ", error);
+        });
+        
+        ArduinoOTA.begin();
+        Serial.println("OTA Ready");
+    }
+    
     mqtt.setServer(mqtt_server, mqtt_port);
     mqtt.setCallback(handleMQTTMessage);
     
@@ -209,6 +249,9 @@ void loop() {
         reconnectMQTT();
     }
     mqtt.loop();
+    
+    // Handle OTA updates
+    ArduinoOTA.handle();
 
     // Regular current reporting
     if (timeElapsed(lastCurrentReport, CURRENT_REPORT_INTERVAL)) {
