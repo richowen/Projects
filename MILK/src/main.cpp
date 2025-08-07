@@ -242,9 +242,22 @@ void loop() {
             // Handled at start of loop
             break;
             
-        case IDLE:
-            // Nothing to do in idle state
+        case IDLE: {
+            // Automatic start when level switch activates (water level drops)
+            bool currentLevelState = digitalRead(LEVEL_SWITCH) == LOW;
+            if (currentLevelState != levelSwitchLastState) {
+                levelSwitchDebounceStart = millis();
+                levelSwitchStable = false;
+                levelSwitchLastState = currentLevelState;
+            } else if (!levelSwitchStable && timeElapsed(levelSwitchDebounceStart, LEVEL_DEBOUNCE_TIME)) {
+                levelSwitchStable = true;
+                if (currentLevelState) { // Level switch activated (water level low) and stable
+                    Serial.println("Level switch activated - starting automatic mixing cycle");
+                    startMixing();
+                }
+            }
             break;
+        }
             
         case MIXING: {
             if (timeElapsed(mixingStartTime, MIXING_TIMEOUT)) {
@@ -260,7 +273,8 @@ void loop() {
                 levelSwitchLastState = currentLevelState;
             } else if (!levelSwitchStable && timeElapsed(levelSwitchDebounceStart, LEVEL_DEBOUNCE_TIME)) {
                 levelSwitchStable = true;
-                if (currentLevelState) { // Level reached and stable
+                if (!currentLevelState) { // Level switch released (water level restored) and stable
+                    Serial.println("Water level restored - moving to post-mixing");
                     currentState = POST_MIXING;
                     postMixStartTime = millis();
                     
@@ -295,6 +309,7 @@ void loop() {
 
 void updateLCD() {
     String line1, line2;
+    char currentStr[8];
     static SystemState lastState = IDLE;
     static ErrorType lastError = NO_ERROR;
     
@@ -376,6 +391,57 @@ void setupWiFi() {
     lcd.print("Connecting WiFi");
 
     delay(10);
+    Serial.println("Clearing WiFi config...");
+    
+    // Clear any cached WiFi configuration
+    WiFi.disconnect(true);  // Disconnect and erase stored WiFi config
+    WiFi.mode(WIFI_OFF);    // Turn off WiFi
+    delay(1000);
+    WiFi.mode(WIFI_STA);    // Set to station mode
+    
+    Serial.println("Scanning for networks...");
+    lcd.setCursor(0, 1);
+    lcd.print("Scanning...");
+    
+    // Scan for networks
+    int n = WiFi.scanNetworks();
+    Serial.printf("Found %d networks\n", n);
+    
+    int bestRSSI = -100;
+    int bestChannel = 0;
+    String bestBSSID = "";
+    
+    // Find the strongest network with our SSID
+    for (int i = 0; i < n; i++) {
+        String foundSSID = WiFi.SSID(i);
+        int32_t rssi = WiFi.RSSI(i);
+        String bssid = WiFi.BSSIDstr(i);
+        int channel = WiFi.channel(i);
+        
+        Serial.printf("Network %d: %s (RSSI: %d, Channel: %d, BSSID: %s)\n", 
+                     i, foundSSID.c_str(), rssi, channel, bssid.c_str());
+        
+        if (foundSSID == ssid && rssi > bestRSSI) {
+            bestRSSI = rssi;
+            bestChannel = channel;
+            bestBSSID = bssid;
+        }
+    }
+    
+    if (bestRSSI > -100) {
+        Serial.printf("Best network: RSSI %d, Channel %d, BSSID %s\n", 
+                     bestRSSI, bestChannel, bestBSSID.c_str());
+        lcd.setCursor(0, 1);
+        lcd.print("Best: " + String(bestRSSI) + "dBm");
+        delay(1000);
+    } else {
+        Serial.println("Target network not found!");
+        lcd.setCursor(0, 1);
+        lcd.print("Network not found");
+        delay(2000);
+        return;
+    }
+    
     Serial.println("Configuring static IP...");
     
     // Configure static IP
@@ -386,8 +452,12 @@ void setupWiFi() {
         delay(2000);
     }
     
-    Serial.println("Connecting to WiFi...");
-    WiFi.begin(ssid, password);
+    Serial.println("Connecting to best WiFi...");
+    // Connect to specific BSSID for best signal
+    uint8_t bssid[6];
+    sscanf(bestBSSID.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", 
+           &bssid[0], &bssid[1], &bssid[2], &bssid[3], &bssid[4], &bssid[5]);
+    WiFi.begin(ssid, password, bestChannel, bssid);
 
     int dots = 0;
     unsigned long startAttemptTime = millis();
@@ -429,7 +499,6 @@ void reconnectMQTT() {
     // Connect with Last Will Testament - if device disconnects unexpectedly, broker will publish "offline"
     if (mqtt.connect(clientId.c_str(), mqtt_user, mqtt_password, availability_topic, 1, true, "offline")) {
         Serial.println("MQTT connected");
-        mqtt.subscribe(command_topic);
         mqtt.publish(availability_topic, "online", true);
         reportStatus();
     } else {
@@ -440,18 +509,12 @@ void reconnectMQTT() {
 }
 
 void handleMQTTMessage(char* topic, byte* payload, unsigned int length) {
+    // MQTT is monitoring only - no commands processed
     String message = "";
     for (unsigned int i = 0; i < length; i++) {
         message += (char)payload[i];
     }
-    
-    if (String(topic) == command_topic) {
-        if (message == "start" && currentState == IDLE) {
-            startMixing();
-        } else if (message == "stop") {
-            stopMixing();
-        }
-    }
+    Serial.println("MQTT message received (monitoring only): " + message);
 }
 
 void reportStatus() {
