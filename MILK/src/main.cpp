@@ -698,11 +698,12 @@ bool timeElapsed(unsigned long start, unsigned long interval) {
 void initializeData() {
     prefs.begin("milkmixer", false);
     bootTime = millis();
+    lastDataReport = 0; // Initialize data report timer
     totalMixes = prefs.getUInt("totalMixes", 0);
     errorCount = prefs.getUInt("errorCount", 0);
     lastMixTime = prefs.getULong("lastMixTime", 0);
     sessionMixes = 0;
-    Serial.printf("Data initialized - Total mixes: %u, Errors: %u\n", totalMixes, errorCount);
+    Serial.printf("Data initialized - Boot time: %lu, Total mixes: %u, Errors: %u\n", bootTime, totalMixes, errorCount);
 }
 
 void incrementMixCount() {
@@ -721,26 +722,43 @@ void incrementErrorCount() {
 }
 
 void reportData() {
-    if (!mqtt.connected()) return;
+    if (!mqtt.connected()) {
+        Serial.println("reportData: MQTT not connected");
+        return;
+    }
     
-    unsigned long uptimeHours = (millis() - bootTime) / 3600000;
+    unsigned long currentTime = millis();
+    unsigned long uptimeSeconds = (currentTime - bootTime) / 1000;
+    unsigned long uptimeHours = uptimeSeconds / 3600;
+    
+    Serial.printf("reportData: Current time: %lu, Boot time: %lu, Uptime: %lu hours\n", 
+                  currentTime, bootTime, uptimeHours);
+    Serial.printf("reportData: Total mixes: %u, Session mixes: %u, Errors: %u\n", 
+                  totalMixes, sessionMixes, errorCount);
     
     char buffer[16];
     
     sprintf(buffer, "%u", totalMixes);
     mqtt.publish(data_total_mixes_topic, buffer, false);
+    Serial.printf("Published total_mixes: %s\n", buffer);
     
     sprintf(buffer, "%u", sessionMixes);
     mqtt.publish(data_session_mixes_topic, buffer, false);
+    Serial.printf("Published session_mixes: %s\n", buffer);
     
     sprintf(buffer, "%lu", uptimeHours);
     mqtt.publish(data_uptime_hours_topic, buffer, false);
+    Serial.printf("Published uptime_hours: %s\n", buffer);
     
     sprintf(buffer, "%u", errorCount);
     mqtt.publish(data_error_count_topic, buffer, false);
+    Serial.printf("Published error_count: %s\n", buffer);
     
     if (lastMixTime > 0) {
         sprintf(buffer, "%lu", lastMixTime);
         mqtt.publish(data_last_mix_topic, buffer, false);
+        Serial.printf("Published last_mix: %s\n", buffer);
     }
+    
+    Serial.println("reportData: All data published successfully");
 }
