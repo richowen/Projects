@@ -150,45 +150,52 @@ void setup() {
     
     // Setup WiFi and MQTT
     setupWiFi();
-    
-    // Setup OTA updates (only if WiFi connected)
-    if (WiFi.status() == WL_CONNECTED) {
-        ArduinoOTA.setHostname("MilkMixer-OTA");
-        
-        ArduinoOTA.onStart([]() {
-            // Block OTA during active operations
-            if (currentState == MIXING || currentState == POST_MIXING) {
-                lcd.clear();
-                lcd.setRGB(255, 0, 0);
-                lcd.print("OTA Blocked");
-                lcd.setCursor(0, 1);
-                lcd.print("System Active");
-                return;
-            }
-            
-            lcd.clear();
-            lcd.setRGB(255, 255, 0); // Yellow for OTA
-            lcd.print("OTA Update...");
-            Serial.println("OTA Update Starting");
-        });
-        
-        ArduinoOTA.onEnd([]() {
-            lcd.setCursor(0, 1);
-            lcd.print("Complete!");
-            Serial.println("OTA Update Complete");
-        });
-        
-        ArduinoOTA.onError([](ota_error_t error) {
+
+    // Setup OTA updates (deferred/guarded)
+    // Only allow OTA while not actively mixing
+    ArduinoOTA.setHostname("MilkMixer-OTA");
+
+    ArduinoOTA.onStart([]() {
+        // Actively block OTA during active operations by forcing a restart prompt
+        if (currentState == MIXING || currentState == POST_MIXING) {
             lcd.clear();
             lcd.setRGB(255, 0, 0);
-            lcd.print("OTA Error!");
-            Serial.printf("OTA Error[%u]: ", error);
-        });
-        
+            lcd.print("OTA Blocked");
+            lcd.setCursor(0, 1);
+            lcd.print("System Active");
+#if defined(ARDUINO_ESP32_RELEASE_3_0_0) || defined(ARDUINO_ARCH_ESP32)
+            // Some cores expose ArduinoOTA.abort(); if present, call it
+            // ArduinoOTA.abort();
+#endif
+            // Do not proceed with any state change here; handle loop will skip ArduinoOTA.handle()
+            return;
+        }
+
+        lcd.clear();
+        lcd.setRGB(255, 255, 0); // Yellow for OTA
+        lcd.print("OTA Update...");
+        Serial.println("OTA Update Starting");
+    });
+
+    ArduinoOTA.onEnd([]() {
+        lcd.setCursor(0, 1);
+        lcd.print("Complete!");
+        Serial.println("OTA Update Complete");
+    });
+
+    ArduinoOTA.onError([](ota_error_t error) {
+        lcd.clear();
+        lcd.setRGB(255, 0, 0);
+        lcd.print("OTA Error!");
+        Serial.printf("OTA Error[%u]: ", error);
+    });
+
+    // Do not begin OTA here unconditionally. We'll begin when WiFi is connected and state is safe.
+    if (WiFi.status() == WL_CONNECTED && (currentState == IDLE || currentState == WASH)) {
         ArduinoOTA.begin();
         Serial.println("OTA Ready");
     }
-    
+
     mqtt.setServer(mqtt_server, mqtt_port);
     mqtt.setCallback(handleMQTTMessage);
     
@@ -249,14 +256,23 @@ void loop() {
     }
     mqtt.loop();
     
-    // Handle OTA updates
-    ArduinoOTA.handle();
+    // Handle OTA updates only when allowed
+    if (WiFi.status() == WL_CONNECTED && (currentState == IDLE || currentState == WASH)) {
+        static bool otaStarted = false;
+        if (!otaStarted) {
+            ArduinoOTA.begin();
+            otaStarted = true;
+            Serial.println("OTA Ready");
+        }
+        ArduinoOTA.handle();
+    }
 
     // LCD updates
     if (timeElapsed(lastLCDUpdate, LCD_UPDATE_INTERVAL)) {
         updateLCD();
         lastLCDUpdate = millis();
     }
+    // Ensure OTA is not running during active mixing operations by not calling handle() above
 
     // Watchdog checks
     if (timeElapsed(lastWatchdogCheck, WATCHDOG_INTERVAL)) {
@@ -294,21 +310,28 @@ void loop() {
             }
             
             // Automatic start when level switch activates (water level drops)
-            bool currentLevelState = digitalRead(LEVEL_SWITCH) == LOW;
-            if (currentLevelState != levelSwitchLastState) {
+            // Improved debounce: only commit state after stability window
+            static bool rawLevelLast = digitalRead(LEVEL_SWITCH) == LOW;
+            bool rawLevel = digitalRead(LEVEL_SWITCH) == LOW;
+
+            if (rawLevel != rawLevelLast) {
                 levelSwitchDebounceStart = millis();
                 levelSwitchStable = false;
-                levelSwitchLastState = currentLevelState;
+                rawLevelLast = rawLevel;
             } else if (!levelSwitchStable && timeElapsed(levelSwitchDebounceStart, LEVEL_DEBOUNCE_TIME)) {
                 levelSwitchStable = true;
-                if (currentLevelState) { // Level switch activated (water level low) and stable
-                    Serial.println("Level switch activated - starting automatic mixing cycle");
-                    // Stop any periodic mixing before starting full cycle
-                    if (periodicMixActive) {
-                        digitalWrite(RELAY_MIXER, HIGH);
-                        periodicMixActive = false;
+                // Commit debounced state
+                if (rawLevel != levelSwitchLastState) {
+                    levelSwitchLastState = rawLevel;
+                    if (levelSwitchLastState) { // Level switch activated (water level low) and stable
+                        Serial.println("Level switch activated - starting automatic mixing cycle");
+                        // Stop any periodic mixing before starting full cycle
+                        if (periodicMixActive) {
+                            digitalWrite(RELAY_MIXER, HIGH);
+                            periodicMixActive = false;
+                        }
+                        startMixing();
                     }
-                    startMixing();
                 }
             }
             break;
@@ -320,25 +343,31 @@ void loop() {
                 break;
             }
             
-            // Level switch debouncing with time-based approach
-            bool currentLevelState = digitalRead(LEVEL_SWITCH) == LOW;
-            if (currentLevelState != levelSwitchLastState) {
+            // Level switch debouncing with time-based approach (improved)
+            static bool rawLevelLastMix = digitalRead(LEVEL_SWITCH) == LOW;
+            bool rawLevelMix = digitalRead(LEVEL_SWITCH) == LOW;
+
+            if (rawLevelMix != rawLevelLastMix) {
                 levelSwitchDebounceStart = millis();
                 levelSwitchStable = false;
-                levelSwitchLastState = currentLevelState;
+                rawLevelLastMix = rawLevelMix;
             } else if (!levelSwitchStable && timeElapsed(levelSwitchDebounceStart, LEVEL_DEBOUNCE_TIME)) {
                 levelSwitchStable = true;
-                if (!currentLevelState) { // Level switch released (water level restored) and stable
-                    Serial.println("Water level restored - moving to post-mixing");
-                    currentState = POST_MIXING;
-                    postMixStartTime = millis();
-                    
-                    // Turn off all except mixer
-                    digitalWrite(RELAY_AUGER, HIGH);
-                    digitalWrite(RELAY_AGITATOR, HIGH);
-                    digitalWrite(RELAY_WATER, HIGH);
-                    
-                    reportStatus();
+                // Commit debounced state
+                if (rawLevelMix != levelSwitchLastState) {
+                    levelSwitchLastState = rawLevelMix;
+                    if (!levelSwitchLastState) { // Level switch released (water level restored) and stable
+                        Serial.println("Water level restored - moving to post-mixing");
+                        currentState = POST_MIXING;
+                        postMixStartTime = millis();
+                        
+                        // Turn off all except mixer
+                        digitalWrite(RELAY_AUGER, HIGH);
+                        digitalWrite(RELAY_AGITATOR, HIGH);
+                        digitalWrite(RELAY_WATER, HIGH);
+                        
+                        reportStatus();
+                    }
                 }
             }
             break;
@@ -506,11 +535,21 @@ void setupWiFi() {
     }
     
     Serial.println("Connecting to best WiFi...");
-    // Connect to specific BSSID for best signal
-    uint8_t bssid[6];
-    sscanf(bestBSSID.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", 
-           &bssid[0], &bssid[1], &bssid[2], &bssid[3], &bssid[4], &bssid[5]);
-    WiFi.begin(ssid, password, bestChannel, bssid);
+    // Connect to specific BSSID for best signal, with safe fallback
+    bool bssidParsed = false;
+    uint8_t bssid[6] = {0};
+    if (bestBSSID.length() == 17) {
+        int parsed = sscanf(bestBSSID.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                            &bssid[0], &bssid[1], &bssid[2], &bssid[3], &bssid[4], &bssid[5]);
+        bssidParsed = (parsed == 6);
+    }
+
+    if (bssidParsed) {
+        WiFi.begin(ssid, password, bestChannel, bssid);
+    } else {
+        Serial.println("BSSID parse failed or unavailable, falling back to SSID-only connect");
+        WiFi.begin(ssid, password);
+    }
 
     int dots = 0;
     unsigned long startAttemptTime = millis();
