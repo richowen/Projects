@@ -9,6 +9,13 @@
 const char* ssid = "WiFi";
 const char* password = "Gliders1!";
 
+// Static IP configuration
+IPAddress local_IP(192, 168, 1, 8);    // Static IP for ESP32
+IPAddress gateway(192, 168, 1, 1);       // Router gateway
+IPAddress subnet(255, 255, 255, 0);      // Subnet mask
+IPAddress primaryDNS(8, 8, 8, 8);        // Google DNS
+IPAddress secondaryDNS(8, 8, 4, 4);      // Google DNS backup
+
 // MQTT Broker settings
 const char* mqtt_server = "192.168.1.3";
 const int mqtt_port = 1883;
@@ -422,6 +429,16 @@ void setupWiFi() {
     lcd.print("Connecting WiFi");
 
     delay(10);
+    Serial.println("Configuring static IP...");
+    
+    // Configure static IP
+    if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
+        Serial.println("Static IP configuration failed");
+        lcd.setCursor(0, 1);
+        lcd.print("IP Config Failed");
+        delay(2000);
+    }
+    
     Serial.println("Connecting to WiFi...");
     WiFi.begin(ssid, password);
 
