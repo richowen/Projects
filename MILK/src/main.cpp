@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
+#include <Preferences.h>
 #include "DFRobot_RGBLCD1602.h"
 
 // WiFi credentials
@@ -26,6 +27,11 @@ const char* status_topic = "milk_mixer/status";
 const char* command_topic = "milk_mixer/command";
 const char* error_topic = "milk_mixer/error";
 const char* availability_topic = "milk_mixer/available";
+const char* data_total_mixes_topic = "milk_mixer/data/total_mixes";
+const char* data_session_mixes_topic = "milk_mixer/data/session_mixes";
+const char* data_uptime_hours_topic = "milk_mixer/data/uptime_hours";
+const char* data_last_mix_topic = "milk_mixer/data/last_mix";
+const char* data_error_count_topic = "milk_mixer/data/error_count";
 
 // Pin Definitions
 const int RELAY_AUGER = 25;      // Powder auger relay
@@ -45,6 +51,9 @@ const unsigned long LCD_UPDATE_INTERVAL = 500; // Update LCD every 500ms
 const unsigned long LEVEL_DEBOUNCE_TIME = 1000; // 1 second debounce for level switch
 const unsigned long MQTT_RECONNECT_TIMEOUT = 10000; // 10 second MQTT timeout
 const unsigned long WASH_TIMEOUT = 30000; // 30 second max water on time
+const unsigned long DATA_REPORT_INTERVAL = 60000; // Report data every 60 seconds
+const unsigned long PERIODIC_MIX_INTERVAL = 300000; // 5 minutes between periodic mixes
+const unsigned long PERIODIC_MIX_DURATION = 5000; // 5 seconds of periodic mixing
 
 // System States
 enum SystemState {
@@ -79,16 +88,34 @@ bool washWaterActive = false;
 String lastLCDLine1 = "";
 String lastLCDLine2 = "";
 
+// Data tracking variables
+unsigned long bootTime = 0;
+unsigned long lastDataReport = 0;
+unsigned int sessionMixes = 0;
+unsigned int totalMixes = 0;
+unsigned int errorCount = 0;
+unsigned long lastMixTime = 0;
+
+// Periodic mixing variables
+unsigned long lastPeriodicMix = 0;
+unsigned long periodicMixStartTime = 0;
+bool periodicMixActive = false;
+
 // Objects
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 DFRobot_RGBLCD1602 lcd(/*RGBAddr*/0x2D, /*lcdCols*/16, /*lcdRows*/2);
+Preferences prefs;
 
 // Function Declarations
 void setupWiFi();
 void reconnectMQTT();
 void handleMQTTMessage(char* topic, byte* payload, unsigned int length);
 void reportStatus();
+void reportData();
+void initializeData();
+void incrementMixCount();
+void incrementErrorCount();
 void startMixing();
 void stopMixing();
 void handleError(ErrorType error);
@@ -177,6 +204,9 @@ void setup() {
     levelSwitchStable = true;
     levelSwitchDebounceStart = 0;
     
+    // Initialize data tracking
+    initializeData();
+    
     // Update LCD after initialization
     lcd.clear();
     updateLCD();
@@ -241,6 +271,12 @@ void loop() {
         lastWatchdogCheck = millis();
     }
 
+    // Data reporting
+    if (timeElapsed(lastDataReport, DATA_REPORT_INTERVAL)) {
+        reportData();
+        lastDataReport = millis();
+    }
+
     // Main state machine
     switch (currentState) {
         case WASH:
@@ -248,6 +284,22 @@ void loop() {
             break;
             
         case IDLE: {
+            // Periodic mixing - keep milk stirred every 5 minutes
+            if (!periodicMixActive && timeElapsed(lastPeriodicMix, PERIODIC_MIX_INTERVAL)) {
+                Serial.println("Starting periodic mixing to keep milk stirred");
+                digitalWrite(RELAY_MIXER, LOW); // Turn on mixer only
+                periodicMixActive = true;
+                periodicMixStartTime = millis();
+                lastPeriodicMix = millis();
+            }
+            
+            // Stop periodic mixing after 5 seconds
+            if (periodicMixActive && timeElapsed(periodicMixStartTime, PERIODIC_MIX_DURATION)) {
+                Serial.println("Stopping periodic mixing");
+                digitalWrite(RELAY_MIXER, HIGH); // Turn off mixer
+                periodicMixActive = false;
+            }
+            
             // Automatic start when level switch activates (water level drops)
             bool currentLevelState = digitalRead(LEVEL_SWITCH) == LOW;
             if (currentLevelState != levelSwitchLastState) {
@@ -258,6 +310,11 @@ void loop() {
                 levelSwitchStable = true;
                 if (currentLevelState) { // Level switch activated (water level low) and stable
                     Serial.println("Level switch activated - starting automatic mixing cycle");
+                    // Stop any periodic mixing before starting full cycle
+                    if (periodicMixActive) {
+                        digitalWrite(RELAY_MIXER, HIGH);
+                        periodicMixActive = false;
+                    }
                     startMixing();
                 }
             }
@@ -578,6 +635,9 @@ void stopMixing() {
     digitalWrite(RELAY_MIXER, HIGH);
     digitalWrite(RELAY_WATER, HIGH);
     
+    // Increment mix count when cycle completes
+    incrementMixCount();
+    
     currentState = IDLE;
     reportStatus();
 }
@@ -586,6 +646,9 @@ void handleError(ErrorType error) {
     stopMixing();
     currentState = ERROR;
     currentError = error;
+    
+    // Increment error count
+    incrementErrorCount();
     
     // Report error via MQTT (only if connected)
     if (mqtt.connected()) {
@@ -635,5 +698,45 @@ bool timeElapsed(unsigned long start, unsigned long interval) {
     } else {
         // Overflow occurred, calculate correctly
         return (current + (0xFFFFFFFF - start) + 1) >= interval;
+    }
+}
+
+void initializeData() {
+    prefs.begin("milkmixer", false);
+    bootTime = millis();
+    totalMixes = prefs.getUInt("totalMixes", 0);
+    errorCount = prefs.getUInt("errorCount", 0);
+    lastMixTime = prefs.getULong("lastMixTime", 0);
+    sessionMixes = 0;
+    Serial.printf("Data initialized - Total mixes: %u, Errors: %u\n", totalMixes, errorCount);
+}
+
+void incrementMixCount() {
+    sessionMixes++;
+    totalMixes++;
+    lastMixTime = millis();
+    prefs.putUInt("totalMixes", totalMixes);
+    prefs.putULong("lastMixTime", lastMixTime);
+    Serial.printf("Mix completed - Session: %u, Total: %u\n", sessionMixes, totalMixes);
+}
+
+void incrementErrorCount() {
+    errorCount++;
+    prefs.putUInt("errorCount", errorCount);
+    Serial.printf("Error count incremented: %u\n", errorCount);
+}
+
+void reportData() {
+    if (!mqtt.connected()) return;
+    
+    unsigned long uptimeHours = (millis() - bootTime) / 3600000;
+    
+    mqtt.publish(data_total_mixes_topic, String(totalMixes).c_str(), true);
+    mqtt.publish(data_session_mixes_topic, String(sessionMixes).c_str(), true);
+    mqtt.publish(data_uptime_hours_topic, String(uptimeHours).c_str(), true);
+    mqtt.publish(data_error_count_topic, String(errorCount).c_str(), true);
+    
+    if (lastMixTime > 0) {
+        mqtt.publish(data_last_mix_topic, String(lastMixTime).c_str(), true);
     }
 }
