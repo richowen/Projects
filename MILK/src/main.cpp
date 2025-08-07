@@ -172,6 +172,11 @@ void setup() {
         reportStatus();
     }
     
+    // Initialize level switch state for reliable operation
+    levelSwitchLastState = digitalRead(LEVEL_SWITCH) == LOW;
+    levelSwitchStable = true;
+    levelSwitchDebounceStart = 0;
+    
     // Update LCD after initialization
     lcd.clear();
     updateLCD();
@@ -309,9 +314,7 @@ void loop() {
 
 void updateLCD() {
     String line1, line2;
-    char currentStr[8];
     static SystemState lastState = IDLE;
-    static ErrorType lastError = NO_ERROR;
     
     // Update LCD color only when state changes
     if (currentState != lastState) {
@@ -562,8 +565,8 @@ void startMixing() {
     
     currentState = MIXING;
     mixingStartTime = millis();
+    // Reset debounce for new mixing cycle
     levelSwitchDebounceStart = 0;
-    levelSwitchLastState = false;
     levelSwitchStable = false;
     reportStatus();
 }
@@ -625,5 +628,12 @@ void watchdogCheck() {
 }
 
 bool timeElapsed(unsigned long start, unsigned long interval) {
-    return (millis() - start) >= interval;
+    // Handle millis() overflow safely (occurs every ~49 days)
+    unsigned long current = millis();
+    if (current >= start) {
+        return (current - start) >= interval;
+    } else {
+        // Overflow occurred, calculate correctly
+        return (current + (0xFFFFFFFF - start) + 1) >= interval;
+    }
 }
