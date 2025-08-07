@@ -24,7 +24,6 @@ const char* mqtt_password = "p";
 
 // MQTT Topics
 const char* status_topic = "milk_mixer/status";
-const char* command_topic = "milk_mixer/command";
 const char* error_topic = "milk_mixer/error";
 const char* availability_topic = "milk_mixer/available";
 const char* data_total_mixes_topic = "milk_mixer/data/total_mixes";
@@ -192,12 +191,6 @@ void setup() {
     
     mqtt.setServer(mqtt_server, mqtt_port);
     mqtt.setCallback(handleMQTTMessage);
-    
-    // Report initial status (only if MQTT is connected)
-    if (mqtt.connected()) {
-        mqtt.publish(availability_topic, "online", true);
-        reportStatus();
-    }
     
     // Initialize level switch state for reliable operation
     levelSwitchLastState = digitalRead(LEVEL_SWITCH) == LOW;
@@ -557,10 +550,11 @@ void reconnectMQTT() {
     clientId += String(random(0xffff), HEX);
     
     // Connect with Last Will Testament - if device disconnects unexpectedly, broker will publish "offline"
-    if (mqtt.connect(clientId.c_str(), mqtt_user, mqtt_password, availability_topic, 1, true, "offline")) {
+    if (mqtt.connect(clientId.c_str(), mqtt_user, mqtt_password, availability_topic, 1, false, "offline")) {
         Serial.println("MQTT connected");
-        mqtt.publish(availability_topic, "online", true);
+        mqtt.publish(availability_topic, "online", false);
         reportStatus();
+        reportData(); // Send initial data immediately
     } else {
         Serial.print("MQTT connection failed, rc=");
         Serial.println(mqtt.state());
@@ -580,35 +574,35 @@ void handleMQTTMessage(char* topic, byte* payload, unsigned int length) {
 void reportStatus() {
     if (!mqtt.connected()) return; // Only publish if MQTT is connected
     
-    String status;
+    char status[32];
     switch (currentState) {
         case IDLE:
-            status = "idle";
+            strcpy(status, "idle");
             break;
         case MIXING:
-            status = "mixing";
+            strcpy(status, "mixing");
             break;
         case POST_MIXING:
-            status = "post_mixing";
+            strcpy(status, "post_mixing");
             break;
         case WASH:
-            status = "wash_mode";
+            strcpy(status, "wash_mode");
             break;
         case ERROR:
             switch (currentError) {
                 case TIMEOUT_ERROR:
-                    status = "error_timeout";
+                    strcpy(status, "error_timeout");
                     break;
                 case LEVEL_SWITCH_ERROR:
-                    status = "error_level_switch";
+                    strcpy(status, "error_level_switch");
                     break;
                 default:
-                    status = "error_unknown";
+                    strcpy(status, "error_unknown");
             }
             break;
     }
     
-    mqtt.publish(status_topic, status.c_str(), true);
+    mqtt.publish(status_topic, status, false);
 }
 
 void startMixing() {
@@ -652,20 +646,20 @@ void handleError(ErrorType error) {
     
     // Report error via MQTT (only if connected)
     if (mqtt.connected()) {
-        String errorMessage;
+        char errorMessage[64];
         switch (error) {
             case TIMEOUT_ERROR:
-                errorMessage = "Mixing timeout exceeded";
+                strcpy(errorMessage, "Mixing timeout exceeded");
                 break;
             case LEVEL_SWITCH_ERROR:
-                errorMessage = "Level switch malfunction";
+                strcpy(errorMessage, "Level switch malfunction");
                 break;
             default:
-                errorMessage = "Unknown error";
+                strcpy(errorMessage, "Unknown error");
                 break;
         }
         
-        mqtt.publish(error_topic, errorMessage.c_str(), true);
+        mqtt.publish(error_topic, errorMessage, false);
     }
     reportStatus();
     errorStartTime = millis(); // Start error timeout
@@ -731,12 +725,22 @@ void reportData() {
     
     unsigned long uptimeHours = (millis() - bootTime) / 3600000;
     
-    mqtt.publish(data_total_mixes_topic, String(totalMixes).c_str(), true);
-    mqtt.publish(data_session_mixes_topic, String(sessionMixes).c_str(), true);
-    mqtt.publish(data_uptime_hours_topic, String(uptimeHours).c_str(), true);
-    mqtt.publish(data_error_count_topic, String(errorCount).c_str(), true);
+    char buffer[16];
+    
+    sprintf(buffer, "%u", totalMixes);
+    mqtt.publish(data_total_mixes_topic, buffer, false);
+    
+    sprintf(buffer, "%u", sessionMixes);
+    mqtt.publish(data_session_mixes_topic, buffer, false);
+    
+    sprintf(buffer, "%lu", uptimeHours);
+    mqtt.publish(data_uptime_hours_topic, buffer, false);
+    
+    sprintf(buffer, "%u", errorCount);
+    mqtt.publish(data_error_count_topic, buffer, false);
     
     if (lastMixTime > 0) {
-        mqtt.publish(data_last_mix_topic, String(lastMixTime).c_str(), true);
+        sprintf(buffer, "%lu", lastMixTime);
+        mqtt.publish(data_last_mix_topic, buffer, false);
     }
 }
