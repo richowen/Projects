@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <ACS712.h>
 #include <ArduinoOTA.h>
 #include "DFRobot_RGBLCD1602.h"
 
@@ -10,7 +9,7 @@ const char* ssid = "WiFi";
 const char* password = "Gliders1!";
 
 // Static IP configuration
-IPAddress local_IP(192, 168, 1, 8);    // Static IP for ESP32
+IPAddress local_IP(192, 168, 1, 16);      // Static IP for ESP32
 IPAddress gateway(192, 168, 1, 1);       // Router gateway
 IPAddress subnet(255, 255, 255, 0);      // Subnet mask
 IPAddress primaryDNS(8, 8, 8, 8);        // Google DNS
@@ -26,7 +25,6 @@ const char* mqtt_password = "p";
 const char* status_topic = "milk_mixer/status";
 const char* command_topic = "milk_mixer/command";
 const char* error_topic = "milk_mixer/error";
-const char* current_topic = "milk_mixer/current";
 const char* availability_topic = "milk_mixer/available";
 
 // Pin Definitions
@@ -35,17 +33,13 @@ const int RELAY_AGITATOR = 26;   // Powder agitator relay
 const int RELAY_MIXER = 16;      // Liquid mixer relay
 const int RELAY_WATER = 17;      // Water solenoid relay
 const int LEVEL_SWITCH = 12;     // Pressure switch input
-const int CURRENT_SENSOR = 35;   // ACS712 analog input
 #define WASH_STANDBY_PIN 23      // Wash standby switch
 #define WASH_DISPENSE_PIN 5      // Water solenoid activate switch in wash mode
 
 // Constants
-const float EMPTY_CURRENT_THRESHOLD = 0.2;  // Amps - adjust based on your motor
-const float MAX_CURRENT_THRESHOLD = 2.0;   // Amps - adjust based on your motor
 const unsigned long MIXING_TIMEOUT = 60000; // 1 minutes max mixing time
 const unsigned long POST_MIX_TIME = 5000;   // 5 seconds post-mix time
 const unsigned long ERROR_RETRY_DELAY = 300000; // 5 minutes between retries
-const unsigned long CURRENT_REPORT_INTERVAL = 1000; // Report current every second
 const unsigned long WATCHDOG_INTERVAL = 100;  // Check system every 100ms
 const unsigned long LCD_UPDATE_INTERVAL = 500; // Update LCD every 500ms
 const unsigned long LEVEL_DEBOUNCE_TIME = 1000; // 1 second debounce for level switch
@@ -64,9 +58,7 @@ enum SystemState {
 // Error Types
 enum ErrorType {
     NO_ERROR,
-    EMPTY_POWDER,
     TIMEOUT_ERROR,
-    MOTOR_OVERLOAD,
     LEVEL_SWITCH_ERROR
 };
 
@@ -76,7 +68,6 @@ ErrorType currentError = NO_ERROR;
 unsigned long mixingStartTime = 0;
 unsigned long postMixStartTime = 0;
 unsigned long errorStartTime = 0;
-unsigned long lastCurrentReport = 0;
 unsigned long lastWatchdogCheck = 0;
 unsigned long lastLCDUpdate = 0;
 unsigned long lastMQTTAttempt = 0;
@@ -85,15 +76,12 @@ unsigned long washWaterStartTime = 0;
 bool levelSwitchLastState = false;
 bool levelSwitchStable = false;
 bool washWaterActive = false;
-float lastCurrentReading = 0.0;
-bool currentSensorCalibrated = false;
 String lastLCDLine1 = "";
 String lastLCDLine2 = "";
 
 // Objects
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
-ACS712 currentSensor(CURRENT_SENSOR, 5.0, 4095, 66); // 30A version, 5V, 12-bit ADC, mV/A
 DFRobot_RGBLCD1602 lcd(/*RGBAddr*/0x2D, /*lcdCols*/16, /*lcdRows*/2);
 
 // Function Declarations
@@ -101,12 +89,10 @@ void setupWiFi();
 void reconnectMQTT();
 void handleMQTTMessage(char* topic, byte* payload, unsigned int length);
 void reportStatus();
-void checkCurrentDraw();
 void startMixing();
 void stopMixing();
 void handleError(ErrorType error);
 void watchdogCheck();
-void reportCurrent();
 void updateLCD();
 bool timeElapsed(unsigned long start, unsigned long interval);
 
@@ -180,28 +166,6 @@ void setup() {
     mqtt.setServer(mqtt_server, mqtt_port);
     mqtt.setCallback(handleMQTTMessage);
     
-    // Initialize current sensor with validation
-    lcd.clear();
-    lcd.print("Calibrating...");
-    lcd.setCursor(0, 1);
-    lcd.print("Current Sensor");
-    
-    currentSensor.autoMidPoint();
-    delay(1000); // Allow sensor to stabilize
-    
-    // Validate calibration
-    float testReading = currentSensor.mA_DC() / 1000.0;
-    if (testReading > -10.0 && testReading < 10.0) { // Reasonable range check
-        currentSensorCalibrated = true;
-        lcd.setCursor(0, 1);
-        lcd.print("Sensor OK       ");
-    } else {
-        currentSensorCalibrated = false;
-        lcd.setCursor(0, 1);
-        lcd.print("Sensor Error!   ");
-    }
-    delay(1000);
-    
     // Report initial status (only if MQTT is connected)
     if (mqtt.connected()) {
         mqtt.publish(availability_topic, "online", true);
@@ -260,12 +224,6 @@ void loop() {
     // Handle OTA updates
     ArduinoOTA.handle();
 
-    // Regular current reporting
-    if (timeElapsed(lastCurrentReport, CURRENT_REPORT_INTERVAL)) {
-        reportCurrent();
-        lastCurrentReport = millis();
-    }
-
     // LCD updates
     if (timeElapsed(lastLCDUpdate, LCD_UPDATE_INTERVAL)) {
         updateLCD();
@@ -293,8 +251,6 @@ void loop() {
                 handleError(TIMEOUT_ERROR);
                 break;
             }
-            
-            checkCurrentDraw();
             
             // Level switch debouncing with time-based approach
             bool currentLevelState = digitalRead(LEVEL_SWITCH) == LOW;
@@ -339,7 +295,6 @@ void loop() {
 
 void updateLCD() {
     String line1, line2;
-    char currentStr[8];
     static SystemState lastState = IDLE;
     static ErrorType lastError = NO_ERROR;
     
@@ -371,27 +326,19 @@ void updateLCD() {
             break;
         case MIXING:
             line1 = "Status: MIXING";
-            dtostrf(lastCurrentReading, 1, 1, currentStr);
-            line2 = "Current: " + String(currentStr) + "A";
+            line2 = "Running...";
             break;
         case POST_MIXING: {
             int remainingTime = (POST_MIX_TIME - (millis() - postMixStartTime)) / 1000;
             line1 = "Post-Mix: " + String(remainingTime) + "s";
-            dtostrf(lastCurrentReading, 1, 1, currentStr);
-            line2 = "Current: " + String(currentStr) + "A";
+            line2 = "Finishing...";
             break;
         }
         case ERROR:
             line1 = "ERROR";
             switch (currentError) {
-                case EMPTY_POWDER:
-                    line2 = "Empty Powder!";
-                    break;
                 case TIMEOUT_ERROR:
                     line2 = "Timeout Error!";
-                    break;
-                case MOTOR_OVERLOAD:
-                    line2 = "Motor Overload!";
                     break;
                 case LEVEL_SWITCH_ERROR:
                     line2 = "Level Sw Error!";
@@ -526,14 +473,8 @@ void reportStatus() {
             break;
         case ERROR:
             switch (currentError) {
-                case EMPTY_POWDER:
-                    status = "error_empty_powder";
-                    break;
                 case TIMEOUT_ERROR:
                     status = "error_timeout";
-                    break;
-                case MOTOR_OVERLOAD:
-                    status = "error_motor_overload";
                     break;
                 case LEVEL_SWITCH_ERROR:
                     status = "error_level_switch";
@@ -545,39 +486,6 @@ void reportStatus() {
     }
     
     mqtt.publish(status_topic, status.c_str(), true);
-}
-
-void reportCurrent() {
-    if (!mqtt.connected()) return; // Only publish if MQTT is connected
-    
-    if (currentState == MIXING || currentState == POST_MIXING) {
-        lastCurrentReading = currentSensor.mA_DC() / 1000.0; // Convert mA to A
-        char currentStr[10];
-        dtostrf(lastCurrentReading, 1, 2, currentStr);
-        mqtt.publish(current_topic, currentStr, false);
-    }
-}
-
-void checkCurrentDraw() {
-    if (!currentSensorCalibrated) return; // Skip if sensor not calibrated
-    
-    float current = currentSensor.mA_DC() / 1000.0; // Convert mA to A
-    
-    // Validate reading is reasonable
-    if (current < -50.0 || current > 50.0) return; // Skip invalid readings
-    
-    lastCurrentReading = current;
-    
-    // Check for empty powder (low current) - only after motor has had time to start
-    if (current < EMPTY_CURRENT_THRESHOLD && currentState == MIXING && 
-        timeElapsed(mixingStartTime, 5000)) { // Wait 5 seconds after start
-        handleError(EMPTY_POWDER);
-    }
-    
-    // Check for motor overload (high current)
-    if (current > MAX_CURRENT_THRESHOLD) {
-        handleError(MOTOR_OVERLOAD);
-    }
 }
 
 void startMixing() {
@@ -617,14 +525,8 @@ void handleError(ErrorType error) {
     if (mqtt.connected()) {
         String errorMessage;
         switch (error) {
-            case EMPTY_POWDER:
-                errorMessage = "Powder hopper empty";
-                break;
             case TIMEOUT_ERROR:
                 errorMessage = "Mixing timeout exceeded";
-                break;
-            case MOTOR_OVERLOAD:
-                errorMessage = "Motor overload detected";
                 break;
             case LEVEL_SWITCH_ERROR:
                 errorMessage = "Level switch malfunction";
