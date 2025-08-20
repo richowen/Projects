@@ -3,6 +3,8 @@
 #include <ArduinoOTA.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include "remote_monitor.h"
+#include "monitor_config.h"
 
 // ================= Hardware Configuration =================
 // Active LOW relays
@@ -113,7 +115,7 @@ void setup() {
   esp_task_wdt_init(WDT_TIMEOUT_SECONDS, true); // panic on WDT
   esp_task_wdt_add(NULL);
 
-  // Networking - initialize state; OTA will be initialized on connect
+  // Networking - initialize state; OTA and remote monitor will be initialized on connect
   initializeWiFi();
   initializeOTA(); // configure OTA callbacks and hostname (but defer begin until connected)
 
@@ -123,12 +125,14 @@ void setup() {
 
   // If previous reset indicates instability, start with cooldown
   if (rr == ESP_RST_WDT || rr == ESP_RST_BROWNOUT || rr == ESP_RST_POWERON) {
-    Serial.println("Safety cooldown on boot.");
+    RLOG_PRINTLN("Safety cooldown on boot.");
     allRelaysOff();
     delay(500); // short, one-off delay at boot is acceptable
   }
 
-  Serial.println("=== System Ready ===");
+  RLOG_PRINTLN("=== System Ready ===");
+  
+  // Remote monitor will start automatically when WiFi connects (see onWiFiEvent)
 }
 
 // ================== Main Loop =============================
@@ -142,6 +146,9 @@ void loop() {
   monitorHealth();
 
   handleWiFiOTA();
+  
+  // Service remote monitor
+  remoteMonitor.handle();
 
   if ((millis() - lastStatusPrint) >= STATUS_INTERVAL) {
     printSystemStatus();
@@ -190,15 +197,23 @@ void onWiFiEvent(WiFiEvent_t event) {
     case SYSTEM_EVENT_STA_GOT_IP:
       Serial.print("WiFi connected. IP: ");
       Serial.println(WiFi.localIP());
-      // Initialize OTA service now that we have connectivity.
-      // ArduinoOTA.begin() is safe to call multiple times, but we guard to avoid repeated init spam.
+
+      // OTA
       Serial.println("Initializing OTA service (on WiFi connect)...");
       ArduinoOTA.begin();
+
+      // Remote monitor
+      if (!remoteMonitor.isEnabled()) {
+        remoteMonitor.begin(MONITOR_TCP_PORT, MONITOR_WEB_PORT);
+      }
+
       // Reset WiFi backoff interval on successful connect
       wifiRetryIntervalMs = WIFI_RETRY_INIT_MS;
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("WiFi disconnected.");
+      // Optionally stop servers to free resources
+      remoteMonitor.end();
       break;
     default: break;
   }
@@ -259,8 +274,8 @@ void serviceInputs() {
       // only act if this is a new stable state
       if (reading != levelSwitchStableState) {
         levelSwitchStableState = reading;
-        Serial.print("Level switch stable: ");
-        Serial.println(levelSwitchStableState == LOW ? "LOW (milk needed)" : "HIGH (milk sufficient)");
+        RLOG_PRINTF("Level switch stable: %s\n",
+                   levelSwitchStableState == LOW ? "LOW (milk needed)" : "HIGH (milk sufficient)");
       }
     }
   }
@@ -277,8 +292,7 @@ void enterFault(const char* why) {
   transitionTo(FAULT);
   unsigned long now = millis();
   faultEnteredAt = now;
-  Serial.print("FAULT: ");
-  Serial.println(why);
+  RLOG_PRINTF("FAULT: %s\n", why);
 
   // Fault window handling
   if ((now - lastFaultTimestamp) <= FAULT_WINDOW_MS) {
@@ -288,11 +302,11 @@ void enterFault(const char* why) {
   }
   lastFaultTimestamp = now;
 
-  Serial.printf("Fault count (window %lu ms): %u\n", FAULT_WINDOW_MS, faultCount);
+  RLOG_PRINTF("Fault count (window %lu ms): %u\n", FAULT_WINDOW_MS, faultCount);
 
   // Escalate to reboot if faults keep happening within the window
   if (faultCount >= MAX_FAULTS_BEFORE_REBOOT) {
-    Serial.println("Too many faults in short time - performing controlled restart.");
+    RLOG_PRINTLN("Too many faults in short time - performing controlled restart.");
     delay(100); // allow Serial to flush
     esp_restart();
   }
@@ -305,14 +319,14 @@ void updateStateMachine() {
     case IDLE:
       // Demand triggered
       if (levelSwitchStableState == LOW) {
-        Serial.println("STATE: IDLE -> MIXING (level low)");
+        RLOG_PRINTLN("STATE: IDLE -> MIXING (level low)");
         mixingRelaysOn();
         transitionTo(MIXING);
         return;
       }
       // Periodic stir
       if ((now - lastPeriodicMix) >= PERIODIC_MIX_INTERVAL) {
-        Serial.println("STATE: IDLE -> PERIODIC_MIX (interval elapsed)");
+        RLOG_PRINTLN("STATE: IDLE -> PERIODIC_MIX (interval elapsed)");
         mixerOnlyOn();
         transitionTo(PERIODIC_MIX);
         lastPeriodicMix = now;
@@ -328,7 +342,7 @@ void updateStateMachine() {
       }
       // Stop when level restored
       if (levelSwitchStableState == HIGH) {
-        Serial.println("STATE: MIXING -> POST_MIX (level restored)");
+        RLOG_PRINTLN("STATE: MIXING -> POST_MIX (level restored)");
         mixerOnlyOn();
         transitionTo(POST_MIX);
         return;
@@ -337,7 +351,7 @@ void updateStateMachine() {
 
     case POST_MIX:
       if (inStateFor(POST_MIX_DURATION)) {
-        Serial.println("STATE: POST_MIX -> IDLE");
+        RLOG_PRINTLN("STATE: POST_MIX -> IDLE");
         allRelaysOff();
         transitionTo(IDLE);
         return;
@@ -346,14 +360,14 @@ void updateStateMachine() {
 
     case PERIODIC_MIX:
       if (inStateFor(PERIODIC_MIX_DURATION)) {
-        Serial.println("STATE: PERIODIC_MIX -> IDLE");
+        RLOG_PRINTLN("STATE: PERIODIC_MIX -> IDLE");
         allRelaysOff();
         transitionTo(IDLE);
         return;
       }
       // If demand arises during periodic, escalate to full MIXING
       if (levelSwitchStableState == LOW) {
-        Serial.println("STATE: PERIODIC_MIX -> MIXING (demand during periodic)");
+        RLOG_PRINTLN("STATE: PERIODIC_MIX -> MIXING (demand during periodic)");
         mixingRelaysOn();
         transitionTo(MIXING);
         return;
@@ -363,7 +377,7 @@ void updateStateMachine() {
     case FAULT:
       // Sit in FAULT with everything OFF, then auto-recover to IDLE after cooldown
       if ((now - faultEnteredAt) >= FAULT_COOLDOWN_MS) {
-        Serial.println("STATE: FAULT -> IDLE (cooldown complete)");
+        RLOG_PRINTLN("STATE: FAULT -> IDLE (cooldown complete)");
         allRelaysOff();
         transitionTo(IDLE);
         // push out periodic mix timer so we do not immediately start again
@@ -421,28 +435,33 @@ void handleWiFiOTA() {
 
 // ================== Status ================================
 void printSystemStatus(const char* reason) {
-  Serial.println("=== System Status ===");
-  Serial.print("State: ");
+  RLOG_PRINTLN("=== System Status ===");
+  
+  const char* stateStr = "";
   switch (currentState) {
-    case IDLE:          Serial.println("IDLE"); break;
-    case MIXING:        Serial.println("MIXING"); break;
-    case POST_MIX:      Serial.println("POST_MIX"); break;
-    case PERIODIC_MIX:  Serial.println("PERIODIC_MIX"); break;
-    case FAULT:         Serial.println("FAULT"); break;
+    case IDLE:          stateStr = "IDLE"; break;
+    case MIXING:        stateStr = "MIXING"; break;
+    case POST_MIX:      stateStr = "POST_MIX"; break;
+    case PERIODIC_MIX:  stateStr = "PERIODIC_MIX"; break;
+    case FAULT:         stateStr = "FAULT"; break;
   }
+  RLOG_PRINTF("State: %s\n", stateStr);
 
-  Serial.print("Level Switch: ");
-  Serial.println(levelSwitchStableState == LOW ? "LOW (milk needed)" : "HIGH (milk sufficient)");
+  RLOG_PRINTF("Level Switch: %s\n",
+             levelSwitchStableState == LOW ? "LOW (milk needed)" : "HIGH (milk sufficient)");
 
-  Serial.print("WiFi: ");
-  Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+  RLOG_PRINTF("WiFi: %s\n",
+             WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+             
+  if (remoteMonitor.isEnabled()) {
+    RLOG_PRINTF("Remote Clients: %d\n", remoteMonitor.getClientCount());
+  }
 
   if (reason) {
-    Serial.print("Note: ");
-    Serial.println(reason);
+    RLOG_PRINTF("Note: %s\n", reason);
   }
 
-  Serial.printf("Uptime: %lu s\n", millis() / 1000UL);
-  Serial.printf("Free Heap: %u bytes\n", (unsigned)ESP.getFreeHeap());
-  Serial.println("====================");
+  RLOG_PRINTF("Uptime: %lu s\n", millis() / 1000UL);
+  RLOG_PRINTF("Free Heap: %u bytes\n", (unsigned)ESP.getFreeHeap());
+  RLOG_PRINTLN("====================");
 }
