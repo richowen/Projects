@@ -5,16 +5,20 @@
 ### Pre-Deployment Checklist
 
 1. **Hardware Verification**
-   - [ ] ESP32 FireBeetle board functioning
-   - [ ] All 4 relays wired to correct pins (25, 26, 16, 17)
-   - [ ] Level switch connected to pin 12 with pull-up
-   - [ ] Power supply stable and reliable
-   - [ ] All connections secured and protected from moisture
+    - [ ] ESP32 FireBeetle board functioning
+    - [ ] All 4 relays wired to correct pins (25, 26, 16, 17)
+    - [ ] Level switch connected to pin 27 with pull-up
+    - [ ] Wash standby switch connected to pin 23 with pull-up
+    - [ ] Wash dispense switch connected to pin 5 with pull-up
+    - [ ] RGB LCD connected via I2C (SDA=21, SCL=22)
+    - [ ] Power supply stable and reliable
+    - [ ] All connections secured and protected from moisture
 
 2. **Network Configuration**
-   - [ ] WiFi network "WiFi" available at installation site
-   - [ ] Static IP 192.168.1.16 available and not conflicting
-   - [ ] Router configured to allow OTA on port 3232
+    - [ ] WiFi network "WiFi" available at installation site
+    - [ ] Static IP 192.168.1.16 available and not conflicting
+    - [ ] Router configured to allow OTA on port 3232
+    - [ ] MQTT broker running at 192.168.1.3:1883 with credentials (user: richowen, pass: p)
 
 3. **Software Preparation**
    - [ ] Code compiled successfully in PlatformIO
@@ -42,11 +46,14 @@
 1. **Power down all equipment**
 2. **Install ESP32 in weatherproof enclosure**
 3. **Connect relay outputs to milk machine components:**
-   - Pin 25 → Auger control relay
-   - Pin 26 → Agitator control relay  
-   - Pin 16 → Mixer control relay
-   - Pin 17 → Water control relay
-4. **Connect level switch to pin 12**
+    - Pin 25 → Auger control relay
+    - Pin 26 → Agitator control relay
+    - Pin 16 → Mixer control relay
+    - Pin 17 → Water control relay
+4. **Connect switches:**
+    - Level switch to pin 27
+    - Wash standby switch to pin 23
+    - Wash dispense switch to pin 5
 5. **Apply power and verify startup sequence**
 6. **Test complete mixing cycle**
 
@@ -77,12 +84,27 @@ Connect to serial port (115200 baud) to monitor:
 ```
 === System Status ===
 State: IDLE
-Level Switch: HIGH (milk sufficient)  
+Level Switch: HIGH (milk sufficient)
 WiFi: Connected
 Uptime: 86400 seconds
 Free Heap: 245760 bytes
 ====================
 ```
+
+#### MQTT Monitoring
+
+The system publishes real-time status to MQTT topics under `home/milk_machine/`:
+- `state`: Current state (IDLE, MIXING, POST_MIX, PERIODIC_MIX, FAULT)
+- `level`: Level switch (LOW/HIGH)
+- `uptime`: Uptime in seconds
+- `heap`: Free memory in bytes
+- `fault_count`: Fault count in current window
+
+Home Assistant auto-discovers sensors and a control switch for force mixing.
+
+Commands can be sent to `home/milk_machine/command`:
+- `force_mix`: Start mixing cycle
+- `stop`: Stop current mixing
 
 #### OTA Updates
 
@@ -161,11 +183,13 @@ Free Heap: 245760 bytes
 
 ## Success Criteria
 
-✅ **Core Function**: Level switch LOW → mix milk → level switch HIGH → stop  
-✅ **Reliability**: System operates continuously without intervention  
-✅ **Safety**: All relays OFF on power-up and error conditions  
-✅ **Maintenance**: OTA updates possible for remote firmware changes  
-✅ **Monitoring**: Serial output provides system status and debugging  
+✅ **Core Function**: Level switch LOW → mix milk → level switch HIGH → stop
+✅ **Wash Mode**: Wash standby switch activates wash mode, dispense controls water
+✅ **LCD Display**: Shows current state with color-coded backlight
+✅ **Reliability**: System operates continuously without intervention
+✅ **Safety**: All relays OFF on power-up and error conditions
+✅ **Maintenance**: OTA updates possible for remote firmware changes
+✅ **Monitoring**: Serial output, MQTT, and LCD provide system status and debugging
 
 ## Production Notes
 
