@@ -47,6 +47,48 @@ The system includes an RGB LCD display (DFRobot RGBLCD1602) showing the current 
 
 Connected via I2C (standard pins SDA=21, SCL=22).
 
+## Web-Based OTA Updates
+
+The system provides a modern web interface for firmware updates at `http://[device-ip]/`:
+
+### Features
+- **Web Upload Form**: Simple browser-based firmware upload
+- **Progress Tracking**: Real-time upload progress with visual feedback
+- **Automatic Reboot**: Device restarts automatically after successful update
+- **Safety**: Upload only works when connected to WiFi
+
+### How to Use
+1. Open web browser and navigate to `http://[milk-machine-ip]/`
+2. Select a firmware `.bin` file from your computer
+3. Click "Upload Firmware"
+4. Wait for upload to complete and device to reboot
+
+### Security Notes
+- No authentication required (intended for local network use)
+- Only accepts `.bin` files
+- Device must be connected to WiFi
+- ArduinoOTA remains available as backup method
+
+## Architecture Overview
+
+The milk mixing machine uses a modern, modular C++ architecture with the following components:
+
+- **MilkMachineApp**: Main application coordinator
+- **HardwareController**: Relay and pin management
+- **InputManager**: Debounced input processing with event callbacks
+- **StateMachine**: Event-driven state management
+- **LCDDisplay**: Visual status display with color coding
+- **MQTTManager**: Home Assistant integration and remote monitoring
+- **SystemMonitor**: Health checks and fault management
+- **Logger**: Multi-output logging system
+
+### Event-Driven Design
+
+Components communicate through events rather than direct coupling:
+- Input events trigger state transitions
+- State changes update displays and publish MQTT messages
+- Observer pattern enables flexible component interactions
+
 ## System Operation
 
 ### Automatic Mixing Cycle

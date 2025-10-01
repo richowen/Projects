@@ -108,6 +108,9 @@ Commands can be sent to `home/milk_machine/command`:
 
 #### OTA Updates
 
+The system supports two OTA update methods:
+
+##### Method 1: ArduinoOTA (Traditional)
 **Prerequisites:**
 - ESP32 connected to "WiFi" network
 - System in IDLE state (automatic safety feature)
@@ -122,6 +125,24 @@ Commands can be sent to `home/milk_machine/command`:
    ```
 4. **Monitor serial output during update**
 5. **Verify new firmware operation**
+
+##### Method 2: Web-Based OTA (Modern)
+**Prerequisites:**
+- ESP32 connected to WiFi network
+- Web browser on same network
+
+**Update Process:**
+1. **Build firmware binary in PlatformIO**
+2. **Open web browser to `http://[device-ip]/`**
+3. **Select firmware .bin file**
+4. **Click "Upload Firmware"**
+5. **Wait for automatic reboot**
+
+**Benefits:**
+- No Arduino IDE required
+- Visual progress feedback
+- Works from any device with web browser
+- More user-friendly for remote updates
 
 ### Troubleshooting Guide
 
