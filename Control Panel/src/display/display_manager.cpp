@@ -84,6 +84,12 @@ void DisplayManager::update() {
             break;
             
         case MODE_ACTION_ICON:
+            // Action icons show for 500ms
+            if ((now - modeStartTime) > 500) {
+                setMode(MODE_IDLE);
+            }
+            break;
+            
         case MODE_SUCCESS:
         case MODE_ERROR:
         case MODE_TEMP_DISPLAY:
@@ -249,24 +255,78 @@ void DisplayManager::updateSpinnerAnimation() {
 
 void DisplayManager::showProgress(uint8_t percent, ProgressStyle style) {
     setMode(MODE_PROGRESS_BAR);
-    updateProgress(percent);
-}
-
-void DisplayManager::updateProgress(uint8_t percent) {
+    
     if (percent > 100) percent = 100;
     
     mx->clear();
     
-    // Vertical progress (existing style for PC shutdown)
-    int filledRows = (percent * 8) / 100;
-    
-    for (int row = 0; row < filledRows; row++) {
-        for (int col = 0; col < 8; col++) {
-            mx->setPoint(row, col, true);
-        }
+    switch (style) {
+        case PROGRESS_VERTICAL:
+            // Vertical progress - fill from bottom to top
+            {
+                int filledRows = (percent * 8) / 100;
+                for (int row = 0; row < filledRows; row++) {
+                    for (int col = 0; col < 8; col++) {
+                        mx->setPoint(row, col, true);
+                    }
+                }
+            }
+            break;
+            
+        case PROGRESS_HORIZONTAL:
+            // Horizontal progress - fill from left to right
+            {
+                int filledCols = (percent * 8) / 100;
+                for (int col = 0; col < filledCols; col++) {
+                    for (int row = 0; row < 8; row++) {
+                        mx->setPoint(row, col, true);
+                    }
+                }
+            }
+            break;
+            
+        case PROGRESS_BORDER:
+            // Border progress - draw around perimeter
+            {
+                int totalPixels = (percent * 28) / 100;  // 28 pixels on border
+                int drawn = 0;
+                
+                // Top edge (left to right)
+                for (int col = 0; col < 8 && drawn < totalPixels; col++, drawn++) {
+                    mx->setPoint(0, col, true);
+                }
+                // Right edge (top to bottom)
+                for (int row = 1; row < 7 && drawn < totalPixels; row++, drawn++) {
+                    mx->setPoint(row, 7, true);
+                }
+                // Bottom edge (right to left)
+                for (int col = 7; col >= 0 && drawn < totalPixels; col--, drawn++) {
+                    mx->setPoint(7, col, true);
+                }
+                // Left edge (bottom to top)
+                for (int row = 6; row >= 1 && drawn < totalPixels; row--, drawn++) {
+                    mx->setPoint(row, 0, true);
+                }
+            }
+            break;
+            
+        case PROGRESS_SEGMENTED:
+            // Segmented progress - 8 segments
+            {
+                int filledSegments = (percent * 8) / 100;
+                for (int seg = 0; seg < filledSegments; seg++) {
+                    mx->setPoint(seg, seg, true);
+                }
+            }
+            break;
     }
     
     mx->update();
+}
+
+void DisplayManager::updateProgress(uint8_t percent) {
+    // Legacy function - defaults to vertical
+    showProgress(percent, PROGRESS_VERTICAL);
 }
 
 // ========================================

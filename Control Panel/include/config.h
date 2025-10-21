@@ -102,6 +102,6 @@
 
 // Visual preferences
 #define SHOW_STATUS_INDICATORS false      // WiFi/HA status in corners (not yet implemented)
-#define ENABLE_BUTTON_FLASH true          // Quick flash on button press
+#define ENABLE_BUTTON_FLASH false         // Quick flash on button press (disabled - icons provide feedback)
 
 #endif

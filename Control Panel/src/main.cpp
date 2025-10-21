@@ -117,12 +117,16 @@ unsigned long potStableTime = 0;
 #define HTTP_TIMEOUT_MS 5000         // HTTP request timeout (5 seconds)
 
 // ========================================
-// PC SHUTDOWN HOLD-TO-ACTIVATE
+// HOLD-TO-ACTIVATE SAFETY PERIODS
 // ========================================
 
 unsigned long pcShutdownHoldStart = 0;
 bool pcShutdownInProgress = false;
 #define PC_SHUTDOWN_HOLD_TIME 3000  // 3 seconds hold required
+
+unsigned long plexOnHoldStart = 0;
+bool plexOnInProgress = false;
+#define PLEX_ON_HOLD_TIME 3000  // 3 seconds hold required
 
 // ========================================
 // WIFI RECONNECTION THROTTLING
@@ -307,9 +311,18 @@ void loop() {
   // Handle potentiometer changes
   handlePotentiometer();
 
-  // Update PC shutdown progress bar if in progress
+  // Update hold-to-activate progress bars if in progress
   if (pcShutdownInProgress) {
     updateShutdownProgress();
+  }
+  
+  if (plexOnInProgress) {
+    unsigned long elapsed = millis() - plexOnHoldStart;
+    uint8_t progress = (uint8_t)((elapsed * 100) / PLEX_ON_HOLD_TIME);
+    if (progress > 100) progress = 100;
+    displayManager.showProgress(progress, PROGRESS_HORIZONTAL);
+    displayActive = true;
+    displayTimeout = millis() + DISPLAY_TIMEOUT_MS;
   }
 
   // Legacy display timeout check (now handled by displayManager)
@@ -577,6 +590,45 @@ void handleButtons() {
                 
                 clearProgressBar();
                 pcShutdownInProgress = false;
+              }
+            }
+          }
+          // Special handling for Plex On button (by entity ID)
+          else if (strcmp(buttons[i].entityId, ENTITY_PLEX) == 0) {
+            if (buttons[i].currentState == LOW) {
+              // Button pressed - start hold timer
+              if (!plexOnInProgress) {
+                plexOnInProgress = true;
+                plexOnHoldStart = millis();
+                clearProgressBar();
+                Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Serial.println("[PLEX ON] Button pressed - hold for 3s");
+                Serial.print("  Entity: ");
+                Serial.println(buttons[i].entityId);
+              }
+            } else {
+              // Button released - check if held long enough
+              if (plexOnInProgress) {
+                unsigned long holdDuration = millis() - plexOnHoldStart;
+                
+                if (holdDuration >= PLEX_ON_HOLD_TIME) {
+                  Serial.println("  → [PLEX ON] Hold complete - sending command");
+                  
+                  // Visual feedback - quick flash + action icon
+                  #if ENABLE_BUTTON_FLASH
+                    displayManager.flash(50);
+                  #endif
+                  displayManager.showActionIcon(buttonNames[i]);
+                  
+                  sendHomeAssistantCommand(buttons[i].entityId, buttons[i].service);
+                } else {
+                  Serial.print("  → [PLEX ON] Cancelled (held ");
+                  Serial.print(holdDuration);
+                  Serial.println("ms < 3000ms)");
+                }
+                
+                clearProgressBar();
+                plexOnInProgress = false;
               }
             }
           } else {
