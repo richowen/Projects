@@ -2,10 +2,12 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "esp_task_wdt.h"
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
 #include "config.h"
+#include "display/display_manager.h"
 
 // ========================================
 // HARDWARE SETUP
@@ -14,6 +16,9 @@
 // MAX7219 Display - Using MD_Parola for simple text display
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 MD_Parola myDisplay = MD_Parola(HARDWARE_TYPE, DISPLAY_CS_PIN, MAX_DEVICES);
+
+// Display Manager for enhanced UX
+DisplayManager displayManager;
 
 // ========================================
 // CUSTOM TINY FONT FOR 8x8 DISPLAY
@@ -82,6 +87,10 @@ ButtonState buttons[] = {
 
 const int NUM_BUTTONS = sizeof(buttons) / sizeof(buttons[0]);
 
+// Compile-time safety check
+static_assert(sizeof(buttonNames)/sizeof(buttonNames[0]) == sizeof(buttons)/sizeof(buttons[0]),
+              "buttonNames and buttons arrays must have same size");
+
 // ========================================
 // POTENTIOMETER STATE
 // ========================================
@@ -100,6 +109,14 @@ unsigned long potStableTime = 0;
 #define POT_STABLE_DURATION 500  // Value must be stable for 500ms before sending
 
 // ========================================
+// CONSTANTS
+// ========================================
+
+#define ADC_MAX_VALUE 4095           // ESP32 12-bit ADC maximum value
+#define WIFI_CONNECT_ATTEMPTS 30     // Maximum WiFi connection attempts
+#define HTTP_TIMEOUT_MS 5000         // HTTP request timeout (5 seconds)
+
+// ========================================
 // PC SHUTDOWN HOLD-TO-ACTIVATE
 // ========================================
 
@@ -108,15 +125,20 @@ bool pcShutdownInProgress = false;
 #define PC_SHUTDOWN_HOLD_TIME 3000  // 3 seconds hold required
 
 // ========================================
-// TEMPERATURE DISPLAY
+// WIFI RECONNECTION THROTTLING
 // ========================================
 
-float currentTemp = 0.0;
-unsigned long lastTempUpdate = 0;
-unsigned long lastDebugOutput = 0; // For throttling debug messages
+unsigned long lastWiFiAttempt = 0;
+#define WIFI_RETRY_INTERVAL 30000  // 30 seconds between reconnection attempts
+
+// ========================================
+// DISPLAY MANAGEMENT
+// ========================================
+
 unsigned long displayTimeout = 0;  // When to clear display
 bool displayActive = false;        // Is display currently showing something
 #define DISPLAY_TIMEOUT_MS 5000    // Clear display after 5 seconds
+#define DISPLAY_HEIGHT 8           // LED matrix height in pixels
 
 // ========================================
 // FUNCTION DECLARATIONS
@@ -124,14 +146,12 @@ bool displayActive = false;        // Is display currently showing something
 
 void connectWiFi();
 void sendHomeAssistantCommand(const char* entityId, const char* service, JsonDocument* data = nullptr);
-float getHomeAssistantTemperature(const char* entityId);
-void updateTemperatureDisplay();
 void handleButtons();
 void handlePotentiometer();
-void displayMessage(const char* msg);
+void displayMessage(const char* msg);  // Legacy - kept for compatibility
 void updateShutdownProgress();
-void clearProgressBar();
-void rotateDisplayCCW();
+void clearProgressBar();  // Legacy - kept for compatibility
+void rotateDisplayCCW();  // Legacy - kept for compatibility
 
 // ========================================
 // SETUP
@@ -166,9 +186,21 @@ void setup() {
   myDisplay.setFont(mediumFont);  // Use custom 4x8 font
   myDisplay.setCharSpacing(0);  // No spacing between digits for 8x8 display
   myDisplay.displayClear();
-  displayMessage("00");
   Serial.println("OK");
-  delay(500);
+  
+  // Initialize Display Manager
+  Serial.print("[INIT] Display Manager... ");
+  displayManager.init(&myDisplay);
+  Serial.println("OK");
+  
+  #if ENABLE_BOOT_ANIMATION
+    Serial.println("[DISPLAY] Starting boot sequence...");
+    displayManager.showBootSequence();
+    delay(1500);  // Let boot animation play
+  #else
+    displayMessage("00");
+    delay(500);
+  #endif
   
   // Initialize Buttons with internal pull-up resistors
   Serial.println("\n[INIT] Button/Switch Configuration:");
@@ -228,13 +260,25 @@ void setup() {
   Serial.println("====================================");
   Serial.println("\nWaiting for input...\n");
   
-  // Show READY briefly then clear display
-  displayMessage("99");
-  delay(2000);
-  myDisplay.displayClear();
-  displayActive = false;
+  // Show READY briefly
+  #if ENABLE_BOOT_ANIMATION
+    displayManager.showIcon(ICON_SMILE, 2000);
+    delay(2000);
+  #else
+    displayMessage("99");
+    delay(2000);
+  #endif
+  
+  // Enable idle animations
+  #if ENABLE_IDLE_ANIMATIONS
+    displayManager.enableIdleAnimations(true);
+  #endif
   
   digitalWrite(STATUS_LED_PIN, HIGH);
+  
+  // Enable watchdog timer for 30 seconds
+  esp_task_wdt_init(30, true);
+  esp_task_wdt_add(NULL);
 }
 
 // ========================================
@@ -242,10 +286,19 @@ void setup() {
 // ========================================
 
 void loop() {
-  // Check WiFi connection (only in production mode)
+  // Reset watchdog timer
+  esp_task_wdt_reset();
+  
+  // Update display manager (animations, timeouts, etc.)
+  displayManager.update();
+  
+  // Check WiFi connection (only in production mode) with throttling
   if (!DEBUG_MODE && WiFi.status() != WL_CONNECTED) {
-    Serial.println("\n[WiFi] Disconnected! Reconnecting...");
-    connectWiFi();
+    if ((unsigned long)(millis() - lastWiFiAttempt) >= WIFI_RETRY_INTERVAL) {
+      Serial.println("\n[WiFi] Disconnected! Reconnecting...");
+      lastWiFiAttempt = millis();
+      connectWiFi();
+    }
   }
 
   // Handle button presses
@@ -259,9 +312,8 @@ void loop() {
     updateShutdownProgress();
   }
 
-  // Check if display should be cleared (timeout)
-  if (displayActive && millis() >= displayTimeout) {
-    myDisplay.displayClear();
+  // Legacy display timeout check (now handled by displayManager)
+  if (displayActive && (long)(millis() - displayTimeout) >= 0) {
     displayActive = false;
   }
 
@@ -279,28 +331,37 @@ void connectWiFi() {
     return;
   }
   
-  displayMessage("11");
+  // Show WiFi connecting icon
+  displayManager.showIcon(ICON_WIFI_1, 500);
   Serial.print("[WiFi] Connecting to: ");
   Serial.println(WIFI_SSID);
   
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+  while (WiFi.status() != WL_CONNECTED && attempts < WIFI_CONNECT_ATTEMPTS) {
     delay(500);
     Serial.print(".");
     attempts++;
+    
+    // Update progress
+    uint8_t progress = (attempts * 100) / WIFI_CONNECT_ATTEMPTS;
+    displayManager.showProgress(progress, PROGRESS_HORIZONTAL);
   }
   
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n[WiFi] Connected!");
     Serial.print("[WiFi] IP Address: ");
     Serial.println(WiFi.localIP());
-    displayMessage("22");
+    
+    // Show success - strong WiFi signal
+    displayManager.showIcon(ICON_WIFI_3, 1000);
+    displayManager.setWiFiSignal(3);
     delay(1000);
   } else {
     Serial.println("\n[WiFi] Connection Failed!");
-    displayMessage("33");
+    displayManager.showError(2000);
+    displayManager.setWiFiSignal(0);
     delay(2000);
   }
 }
@@ -323,8 +384,8 @@ void sendHomeAssistantCommand(const char* entityId, const char* service, JsonDoc
     Serial.print("      URL: ");
     Serial.println(url);
     
-    // Create JSON payload
-    JsonDocument payload;
+    // Create JSON payload with explicit size
+    StaticJsonDocument<256> payload;
     payload["entity_id"] = entityId;
     
     if (data != nullptr) {
@@ -371,11 +432,12 @@ void sendHomeAssistantCommand(const char* entityId, const char* service, JsonDoc
   Serial.println(entityId);
 
   http.begin(url);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.addHeader("Authorization", String("Bearer ") + HA_TOKEN);
   http.addHeader("Content-Type", "application/json");
 
-  // Create JSON payload
-  JsonDocument payload;
+  // Create JSON payload with explicit size
+  StaticJsonDocument<256> payload;
   payload["entity_id"] = entityId;
   
   // Add any additional data if provided
@@ -398,57 +460,31 @@ void sendHomeAssistantCommand(const char* entityId, const char* service, JsonDoc
     Serial.print("[HA] HTTP Response code: ");
     Serial.println(httpCode);
     
+    String response = http.getString();
+    if (response.length() > 0) {
+      Serial.print("[HA] Response: ");
+      Serial.println(response);
+    }
+    
     if (httpCode == 200 || httpCode == 201) {
       Serial.println("[HA] Command sent successfully!");
       digitalWrite(STATUS_LED_PIN, LOW);
       delay(50);
       digitalWrite(STATUS_LED_PIN, HIGH);
+      
+      // Visual feedback - show action icon again on success (not checkmark)
+      // Icon already shown before command, just keep it visible
+    } else {
+      // Visual feedback - error
+      displayManager.showError();
     }
   } else {
     Serial.print("[HA] Error sending command: ");
     Serial.println(http.errorToString(httpCode));
   }
   
+  // Always cleanup HTTP connection
   http.end();
-}
-
-float getHomeAssistantTemperature(const char* entityId) {
-  if (DEBUG_MODE) {
-    // In debug mode, return the setpoint temperature
-    return (float)currentSetpoint;
-  }
-  
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[ERROR] Cannot get temperature - WiFi not connected");
-    return currentTemp;
-  }
-
-  HTTPClient http;
-  String url = String(HA_URL) + "/api/states/" + entityId;
-  
-  http.begin(url);
-  http.addHeader("Authorization", String("Bearer ") + HA_TOKEN);
-  
-  int httpCode = http.GET();
-  
-  if (httpCode == 200) {
-    String payload = http.getString();
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, payload);
-    
-    if (!error) {
-      const char* state = doc["state"];
-      float temp = atof(state);
-      http.end();
-      return temp;
-    }
-  } else {
-    Serial.print("[HA] Error getting temperature: ");
-    Serial.println(httpCode);
-  }
-  
-  http.end();
-  return currentTemp;
 }
 
 // ========================================
@@ -474,27 +510,22 @@ void displayMessage(const char* msg) {
 }
 
 void clearProgressBar() {
-  MD_MAX72XX* mx = myDisplay.getGraphicObject();
-  mx->clear();
+  displayManager.clear();
 }
 
 void updateShutdownProgress() {
   unsigned long elapsed = millis() - pcShutdownHoldStart;
   
-  // Calculate how many rows to fill (0-8)
-  int filledRows = min(8, (int)((elapsed * 8) / PC_SHUTDOWN_HOLD_TIME));
+  // Calculate progress percentage
+  uint8_t progress = (uint8_t)((elapsed * 100) / PC_SHUTDOWN_HOLD_TIME);
+  if (progress > 100) progress = 100;
   
-  // Get direct access to LED matrix for pixel control
-  MD_MAX72XX* mx = myDisplay.getGraphicObject();
-  mx->clear();
+  // Update progress bar using display manager
+  displayManager.showProgress(progress, PROGRESS_VERTICAL);
   
-  // Fill rows from top (row 0) to bottom
-  for (int row = 0; row < filledRows; row++) {
-    for (int col = 0; col < 8; col++) {
-      mx->setPoint(row, col, true);
-    }
-  }
-  mx->update();
+  // Keep display active during progress
+  displayActive = true;
+  displayTimeout = millis() + DISPLAY_TIMEOUT_MS;
 }
 
 // ========================================
@@ -517,8 +548,8 @@ void handleButtons() {
         buttons[i].currentState = reading;
         
         if (buttons[i].type == MOMENTARY_BUTTON) {
-          // Special handling for PC Shutdown button (index 2)
-          if (i == 2) {
+          // Special handling for PC Shutdown button (by entity ID)
+          if (strcmp(buttons[i].entityId, ENTITY_PC_SHUTDOWN) == 0) {
             if (buttons[i].currentState == LOW) {
               // Button pressed - start hold timer
               if (!pcShutdownInProgress) {
@@ -563,6 +594,12 @@ void handleButtons() {
               Serial.print("  Service: ");
               Serial.println(buttons[i].service);
               
+              // Visual feedback - quick flash + action icon
+              #if ENABLE_BUTTON_FLASH
+                displayManager.flash(50);
+              #endif
+              displayManager.showActionIcon(buttonNames[i]);
+              
               sendHomeAssistantCommand(buttons[i].entityId, buttons[i].service);
             }
           }
@@ -593,8 +630,14 @@ void handleButtons() {
           Serial.print("  Service: ");
           Serial.println(service);
           
-          // Special handling for AC Bypass switch
-          if (i == 1) {  // AC Bypass is button index 1
+          // Visual feedback for toggle switches
+          #if ENABLE_BUTTON_FLASH
+            displayManager.flash(50);
+          #endif
+          displayManager.showActionIcon(buttonNames[i]);
+          
+          // Special handling for AC Bypass switch (by entity ID)
+          if (strcmp(buttons[i].entityId, ENTITY_AC_BYPASS) == 0) {
             Serial.println("  [AC BYPASS]");
             
             if (buttons[i].currentState == LOW) {
@@ -629,7 +672,7 @@ void handlePotentiometer() {
   int avgRawValue = potTotal / POT_SAMPLES;
   
   // Map to temperature range (inverted for upside-down pot installation)
-  int potValue = map(avgRawValue, 0, 4095, TEMP_MAX, TEMP_MIN);
+  int potValue = map(avgRawValue, 0, ADC_MAX_VALUE, TEMP_MAX, TEMP_MIN);
   
   // Check if value has changed
   if (potValue != potStableValue) {
@@ -639,13 +682,7 @@ void handlePotentiometer() {
     
     // Update display immediately for responsive feel
     currentSetpoint = potValue;
-    char tempStr[16];
-    sprintf(tempStr, "%d", potValue);
-    displayMessage(tempStr);
-    
-    // Reset display timeout
-    displayTimeout = millis() + DISPLAY_TIMEOUT_MS;
-    displayActive = true;
+    displayManager.showTemperature(potValue);
     return;
   }
   
@@ -669,7 +706,7 @@ void handlePotentiometer() {
     Serial.println("°C)");
     
     // Send temperature setpoint to Home Assistant
-    JsonDocument data;
+    StaticJsonDocument<128> data;
     data["value"] = potValue;
     
     sendHomeAssistantCommand(ENTITY_AC_TEMP, "set_value", &data);
@@ -677,5 +714,8 @@ void handlePotentiometer() {
     lastPotValue = potValue;
     currentSetpoint = potValue;
     lastPotSendTime = millis();
+    
+    // Keep showing temperature (no checkmark needed)
+    displayManager.showTemperature(potValue);
   }
 }

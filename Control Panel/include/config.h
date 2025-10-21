@@ -2,25 +2,18 @@
 #define CONFIG_H
 
 // ========================================
+// SECRETS (WiFi & Home Assistant)
+// ========================================
+// Credentials are stored in secrets.h (not tracked by git)
+// Copy secrets.h.example to secrets.h and fill in your details
+#include "secrets.h"
+
+// ========================================
 // DEBUG CONFIGURATION
 // ========================================
 // Set to true for hardware testing (no WiFi/HTTP calls)
 // Set to false for production use with Home Assistant
 #define DEBUG_MODE false
-
-// ========================================
-// WIFI CONFIGURATION
-// ========================================
-// Replace with your WiFi credentials
-#define WIFI_SSID "WiFi"
-#define WIFI_PASSWORD "Gliders1!"
-
-// ========================================
-// HOME ASSISTANT CONFIGURATION
-// ========================================
-// Replace with your Home Assistant details
-#define HA_URL "http://192.168.1.3:8123"  // Your Home Assistant URL
-#define HA_TOKEN "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIyNWIzYmRhZDk3MmI0NGQ3Yjc0NGU2MGQ3OGM5NzM5MSIsImlhdCI6MTc2MDk3MTgyNSwiZXhwIjoyMDc2MzMxODI1fQ.YwEZTq90yW8iXfJiS3pKW9Cgkid0Ti24Ct39E_0Qe8o"  // Generate in Home Assistant Profile
 
 // ========================================
 // HOME ASSISTANT ENTITY IDs
@@ -50,10 +43,16 @@
 // PIN CONFIGURATION
 // ========================================
 
-// MAX7219 Display (SPI)
+// MAX7219 Display (Hardware SPI)
+// NOTE: This project uses ESP32 hardware SPI pins:
+//   - MOSI (Data): GPIO 23 (defined below but uses hardware SPI)
+//   - SCK (Clock): GPIO 18 (defined below but uses hardware SPI)
+//   - CS (Chip Select): GPIO 5 (user-configurable)
+// If your wiring differs, you must use software SPI by modifying
+// the MD_Parola constructor in main.cpp to include all pin parameters.
 #define DISPLAY_CS_PIN 5
-#define DISPLAY_CLK_PIN 18
-#define DISPLAY_DATA_PIN 23
+#define DISPLAY_CLK_PIN 18   // Hardware SPI SCK - for documentation only
+#define DISPLAY_DATA_PIN 23  // Hardware SPI MOSI - for documentation only
 #define MAX_DEVICES 1  // Number of 8x8 matrices chained together
 
 // Potentiometer (Analog Input - ADC1 channels only)
@@ -84,9 +83,25 @@
 // TIMING CONFIGURATION
 // ========================================
 #define DEBOUNCE_DELAY 50          // Button debounce time (ms)
-#define POT_SEND_INTERVAL 1000     // Min time between pot updates (ms)
-#define POT_THRESHOLD 1            // Min temperature change to trigger update (°C)
-#define TEMP_UPDATE_INTERVAL 5000  // Temperature display update interval (ms)
 #define DISPLAY_INTENSITY 3        // Display brightness (0-15)
+
+// ========================================
+// DISPLAY UX CONFIGURATION
+// ========================================
+// Display behavior
+#define DISPLAY_IDLE_TIMEOUT 30000        // MS until screensaver (30 seconds)
+#define DISPLAY_ACTION_DURATION 500       // MS to show action icon
+#define DISPLAY_SUCCESS_DURATION 1000     // MS to show success
+#define DISPLAY_ERROR_DURATION 1500       // MS to show error
+
+// Animation settings
+#define ENABLE_IDLE_ANIMATIONS false      // Screensaver animations (disabled per user preference)
+#define IDLE_ANIMATION_DURATION 10000     // MS per idle animation pattern (10 seconds)
+#define ANIMATION_FRAME_DELAY 100         // MS per animation frame
+#define ENABLE_BOOT_ANIMATION true        // Cool startup sequence
+
+// Visual preferences
+#define SHOW_STATUS_INDICATORS false      // WiFi/HA status in corners (not yet implemented)
+#define ENABLE_BUTTON_FLASH true          // Quick flash on button press
 
 #endif

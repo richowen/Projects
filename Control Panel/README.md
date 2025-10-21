@@ -13,8 +13,15 @@ A physical control panel using ESP32 to control Home Assistant entities via butt
   - Immersion heater toggle
   - 5 additional configurable buttons
   - Potentiometer for AC temperature control
-- **Visual Feedback**:
-  - MAX7219 dot matrix display showing current temperature
+- **Enhanced Visual Feedback**:
+  - 8x8 LED matrix with custom pixel art icons for every action
+  - Animated boot sequence
+  - Success/error confirmations (checkmarks, X marks)
+  - Progress bars for long-running actions
+  - 5 different idle animations (screensavers)
+  - WiFi signal strength indicators
+  - Real-time temperature display
+  - Quick flash feedback on button press
   - Status LED indicator
   - Serial monitor debugging
 
@@ -311,6 +318,18 @@ For issues or questions:
 4. Check PlatformIO build output
 
 ## Version History
+
+- **v2.0.0** - Enhanced Display UX
+  - Complete 8x8 LED display UX overhaul
+  - 27 custom pixel art icons
+  - Animated boot sequence
+  - 5 idle animation patterns (matrix rain, waves, breathing, starfield, snake)
+  - Success/error visual feedback
+  - Progress bars (vertical, horizontal)
+  - WiFi status indicators
+  - Configurable animations and timeouts
+  - Memory optimized (icons in PROGMEM)
+  - See [DISPLAY_UX_ARCHITECTURE.md](DISPLAY_UX_ARCHITECTURE.md) for details
 
 - **v1.0.0** - Initial release
   - WiFi connectivity
