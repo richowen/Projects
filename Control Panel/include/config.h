@@ -29,7 +29,7 @@
 #define ENTITY_AC_AUTOMATION "automation.ac_bypass_off"
 #define ENTITY_PC_SHUTDOWN "automation.control_panel_pc_off"
 #define ENTITY_PLEX "automation.control_panel_plex_on"
-#define ENTITY_LIGHTS "light.lights"
+#define ENTITY_LIGHTS "automation.control_panel_lights"
 #define ENTITY_IMMERSION "switch.immersion_switch"
 
 // Extra buttons (customize as needed)

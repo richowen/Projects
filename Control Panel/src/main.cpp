@@ -76,7 +76,7 @@ ButtonState buttons[] = {
   {BTN_AC_POWER_PIN, HIGH, HIGH, 0, ENTITY_AC_UNIT, "toggle", MOMENTARY_BUTTON},
   {BTN_AC_BYPASS_PIN, HIGH, HIGH, 0, ENTITY_AC_BYPASS, "input_boolean", TOGGLE_SWITCH},
   {BTN_PC_OFF_PIN, HIGH, HIGH, 0, ENTITY_PC_SHUTDOWN, "trigger", MOMENTARY_BUTTON},
-  {BTN_LIGHTS_PIN, HIGH, HIGH, 0, ENTITY_LIGHTS, "toggle", MOMENTARY_BUTTON},
+  {BTN_LIGHTS_PIN, HIGH, HIGH, 0, ENTITY_LIGHTS, "trigger", MOMENTARY_BUTTON},
   {BTN_IMMERSION_PIN, HIGH, HIGH, 0, ENTITY_IMMERSION, "switch", TOGGLE_SWITCH},
   {BTN_EXTRA_1_PIN, HIGH, HIGH, 0, ENTITY_EXTRA_1, "toggle", MOMENTARY_BUTTON},
   {BTN_EXTRA_2_PIN, HIGH, HIGH, 0, ENTITY_PLEX, "trigger", MOMENTARY_BUTTON},
@@ -533,8 +533,8 @@ void updateShutdownProgress() {
   uint8_t progress = (uint8_t)((elapsed * 100) / PC_SHUTDOWN_HOLD_TIME);
   if (progress > 100) progress = 100;
   
-  // Update progress bar using display manager
-  displayManager.showProgress(progress, PROGRESS_VERTICAL);
+  // Update progress bar using display manager with spiral animation
+  displayManager.showProgress(progress, PROGRESS_SPIRAL);
   
   // Keep display active during progress
   displayActive = true;

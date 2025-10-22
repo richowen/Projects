@@ -8,6 +8,57 @@
 #define DISPLAY_IDLE_ANIMATION_DURATION 10000
 
 // ========================================
+// SPIRAL PROGRESS PATH
+// ========================================
+// Pre-computed spiral path for 8x8 matrix (clockwise, outside-to-inside)
+// Each entry is {row, col} representing the LED position in spiral order
+// Total: 64 pixels (28 + 20 + 12 + 4 from 4 concentric rings)
+struct SpiralCoord {
+    uint8_t row;
+    uint8_t col;
+};
+
+const SpiralCoord SPIRAL_PATH[64] PROGMEM = {
+    // Ring 0 (outer 8x8) - 28 pixels
+    // Top edge (left to right)
+    {0,0}, {0,1}, {0,2}, {0,3}, {0,4}, {0,5}, {0,6}, {0,7},
+    // Right edge (top to bottom, excluding corner)
+    {1,7}, {2,7}, {3,7}, {4,7}, {5,7}, {6,7}, {7,7},
+    // Bottom edge (right to left, excluding corner)
+    {7,6}, {7,5}, {7,4}, {7,3}, {7,2}, {7,1}, {7,0},
+    // Left edge (bottom to top, excluding corners)
+    {6,0}, {5,0}, {4,0}, {3,0}, {2,0}, {1,0},
+    
+    // Ring 1 (6x6) - 20 pixels
+    // Top edge (left to right)
+    {1,1}, {1,2}, {1,3}, {1,4}, {1,5}, {1,6},
+    // Right edge (top to bottom, excluding corner)
+    {2,6}, {3,6}, {4,6}, {5,6}, {6,6},
+    // Bottom edge (right to left, excluding corner)
+    {6,5}, {6,4}, {6,3}, {6,2}, {6,1},
+    // Left edge (bottom to top, excluding corners)
+    {5,1}, {4,1}, {3,1}, {2,1},
+    
+    // Ring 2 (4x4) - 12 pixels
+    // Top edge (left to right)
+    {2,2}, {2,3}, {2,4}, {2,5},
+    // Right edge (top to bottom, excluding corner)
+    {3,5}, {4,5}, {5,5},
+    // Bottom edge (right to left, excluding corner)
+    {5,4}, {5,3}, {5,2},
+    // Left edge (bottom to top, excluding corners)
+    {4,2}, {3,2},
+    
+    // Ring 3 (center 2x2) - 4 pixels
+    // Top edge (left to right)
+    {3,3}, {3,4},
+    // Right edge (top to bottom, excluding corner)
+    {4,4},
+    // Bottom edge (right to left, excluding corner)
+    {4,3}
+};
+
+// ========================================
 // CONSTRUCTOR
 // ========================================
 
@@ -316,6 +367,22 @@ void DisplayManager::showProgress(uint8_t percent, ProgressStyle style) {
                 int filledSegments = (percent * 8) / 100;
                 for (int seg = 0; seg < filledSegments; seg++) {
                     mx->setPoint(seg, seg, true);
+                }
+            }
+            break;
+            
+        case PROGRESS_SPIRAL:
+            // Spiral progress - fill from outside to inside (clockwise)
+            {
+                // Calculate number of pixels to light (0-64)
+                int pixelsToLight = (percent * 64) / 100;
+                if (pixelsToLight > 64) pixelsToLight = 64;
+                
+                // Light up pixels along spiral path
+                for (int i = 0; i < pixelsToLight; i++) {
+                    uint8_t row = pgm_read_byte(&SPIRAL_PATH[i].row);
+                    uint8_t col = pgm_read_byte(&SPIRAL_PATH[i].col);
+                    mx->setPoint(row, col, true);
                 }
             }
             break;
