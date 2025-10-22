@@ -32,7 +32,8 @@ enum ProgressStyle {
     PROGRESS_HORIZONTAL,     // Fill from left to right
     PROGRESS_BORDER,         // Draw around perimeter
     PROGRESS_SEGMENTED,      // 8 segments
-    PROGRESS_SPIRAL          // Spiral fill from outside to inside (clockwise)
+    PROGRESS_SPIRAL,         // Spiral fill from outside to inside (clockwise)
+    PROGRESS_EXPAND_SQUARE   // Expanding square from 4x4 center to 8x8 full
 };
 
 // ========================================

@@ -386,6 +386,52 @@ void DisplayManager::showProgress(uint8_t percent, ProgressStyle style) {
                 }
             }
             break;
+            
+        case PROGRESS_EXPAND_SQUARE:
+            // Expanding square - starts as 2x2 center square, expands to fill 8x8
+            {
+                // Map progress to square size:
+                // 0-25%: 2x2 center square (rows 3-4, cols 3-4)
+                // 26-50%: 4x4 square (rows 2-5, cols 2-5)
+                // 51-75%: 6x6 square (rows 1-6, cols 1-6)
+                // 76-100%: 8x8 full square (rows 0-7, cols 0-7)
+                
+                int startRow, endRow, startCol, endCol;
+                
+                if (percent < 26) {
+                    // 2x2 center square
+                    startRow = 3;
+                    endRow = 4;
+                    startCol = 3;
+                    endCol = 4;
+                } else if (percent < 51) {
+                    // 4x4 square
+                    startRow = 2;
+                    endRow = 5;
+                    startCol = 2;
+                    endCol = 5;
+                } else if (percent < 76) {
+                    // 6x6 square
+                    startRow = 1;
+                    endRow = 6;
+                    startCol = 1;
+                    endCol = 6;
+                } else {
+                    // 8x8 full square
+                    startRow = 0;
+                    endRow = 7;
+                    startCol = 0;
+                    endCol = 7;
+                }
+                
+                // Fill the square
+                for (int row = startRow; row <= endRow; row++) {
+                    for (int col = startCol; col <= endCol; col++) {
+                        mx->setPoint(row, col, true);
+                    }
+                }
+            }
+            break;
     }
     
     mx->update();

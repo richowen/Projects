@@ -213,7 +213,7 @@ void ControlPanel::updateHoldProgress() {
         uint8_t progress = (uint8_t)((elapsed * 100) / _config->getPlexOnHoldTime());
 
         if (progress > 100) progress = 100;
-        _displayManager->showProgress(progress, PROGRESS_HORIZONTAL);
+        _displayManager->showProgress(progress, PROGRESS_EXPAND_SQUARE);
         
         _logger->logf("DEBUG", "Plex on hold progress: %d%%, button state: %s",
                       progress, buttonState ? (buttonState->currentState == LOW ? "HELD" : "RELEASED") : "UNKNOWN");
