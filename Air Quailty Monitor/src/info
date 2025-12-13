@@ -1,0 +1,41 @@
+Esp 32 based air quailty multisensor project.
+
+Board: ESP 32 DEVKIT 1
+
+PM2.5 Air Quality Sensor
+https://wiki.dfrobot.com/Gravity_PM2.5_Air_Quality_Sensor_SKU_SEN0460
+Library: dfrobot/DFRobot_AirQualitySensor@^1.0.0
+I2C Address: 0x19
+
+ENS160 Air Quality Multi-Gas Sensor
+https://wiki.dfrobot.com/SKU_SEN0514_Gravity_ENS160_Air_Quality_Sensor
+Library: dfrobot/DFRobot_ENS160@^1.0.1
+I2C Address: 0x53
+
+CO Gas Sensor
+https://wiki.dfrobot.com/SKU_SEN0465toSEN0476_Gravity_Gas_Sensor_Calibrated_I2C_UART
+Library: phzi/DFRobot_MultiGasSensor@^2.0.0
+I2C Address: 0x74
+
+O2 Gas Sensor
+https://wiki.dfrobot.com/SKU_SEN0465toSEN0476_Gravity_Gas_Sensor_Calibrated_I2C_UART
+Library: phzi/DFRobot_MultiGasSensor@^2.0.0
+I2C Address: 0x76
+
+Wifi
+
+SSID: WiFi
+Password: Gliders!
+Static IP: 
+192.168.1.25
+Gateway: 192.168.1.1
+Subnet Mask: 255.255.255.0
+DNS: 8.8.8.8
+
+Home assistant mqtt
+
+192.168.1.3
+mqtt port: 1883
+mqtt username: richowen
+mqtt password: p
+mqtt client id: esp32_air_quality_sensor
