@@ -7,6 +7,7 @@
 
 // Function prototypes
 void initNetwork();
+void setupWebRoutes();
 void connectToWifi();
 int8_t findStrongestAP();
 void handleWebRequests();

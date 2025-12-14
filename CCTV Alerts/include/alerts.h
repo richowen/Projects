@@ -28,6 +28,8 @@ struct AlertConfig {
 void initAlerts();
 void triggerAlert(AlertType type);
 void updateAlerts();
+void updateLedPattern(int pattern, unsigned long elapsedTime);
+void updateSoundSequence(AlertConfig& config, unsigned long currentTime);
 void stopAllAlerts();
 bool isAlertActive();
 AlertConfig getAlertConfig(AlertType type);

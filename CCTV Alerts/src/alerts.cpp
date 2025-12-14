@@ -14,12 +14,12 @@ static AlertConfig defaultConfigs[ALERT_COUNT] = {
     // ALERT_CAR
     {
         "Car",
-        1, // blink
+        3, // blink
         3000, // 3 seconds
-        {800, 1000, 1200, 0, 0}, // rising tones
-        {200, 200, 200, 0, 0},
+        {1000, 1500, 2000, 0, 0}, // rising tones
+        {500, 500, 500, 0, 0},
         3,
-        1 // medium priority
+        2, //high priority
     },
     // ALERT_TRUCK
     {
@@ -70,9 +70,10 @@ void initAlerts() {
     // Load configurations from preferences
     loadAlertConfigs();
 
-    // Setup LED PWM
-    ledcSetup(LED_CHANNEL, LED_FREQ, LED_RESOLUTION);
-    ledcAttachPin(LED_PIN, LED_CHANNEL);
+    // Setup LED pin as regular output
+    // Note: PWM will ONLY be used for breathe pattern to avoid tone() conflicts
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
 
     // Setup speaker pin
     pinMode(SPEAKER_PIN, OUTPUT);
@@ -89,7 +90,13 @@ void triggerAlert(AlertType type) {
     alertActive = true;
     alertStartTime = millis();
     currentSoundIndex = 0;
-    lastSoundTime = 0;
+    lastSoundTime = millis();
+    
+    // Start playing the first sound immediately
+    AlertConfig& config = currentConfigs[type];
+    if (config.soundCount > 0 && config.soundSequence[0] > 0) {
+        tone(SPEAKER_PIN, config.soundSequence[0], config.soundDurations[0] - 10);
+    }
 
     Serial.printf("Alert triggered: %s\n", currentConfigs[type].name.c_str());
 }
@@ -115,36 +122,45 @@ void updateAlerts() {
 
 void updateLedPattern(int pattern, unsigned long elapsedTime) {
     switch (pattern) {
-        case 0: // solid
-            ledcWrite(LED_CHANNEL, 255);
+        case 0: // solid - use digitalWrite to avoid PWM conflict with tone()
+            digitalWrite(LED_PIN, HIGH);
             break;
-        case 1: // blink
-            ledcWrite(LED_CHANNEL, (elapsedTime / 250) % 2 ? 255 : 0);
+        case 1: // blink - use digitalWrite
+            digitalWrite(LED_PIN, (elapsedTime / 250) % 2 ? HIGH : LOW);
             break;
-        case 2: // breathe
+        case 2: // breathe - needs PWM, setup dynamically
             {
+                static bool pwmSetup = false;
+                if (!pwmSetup) {
+                    ledcSetup(LED_CHANNEL, LED_FREQ, LED_RESOLUTION);
+                    ledcAttachPin(LED_PIN, LED_CHANNEL);
+                    pwmSetup = true;
+                }
                 float phase = (elapsedTime % BREATHE_PERIOD) / (float)BREATHE_PERIOD;
                 int brightness = (int)((exp(sin(phase * PI)) - 0.36787944) * (255 / exp(1)));
                 ledcWrite(LED_CHANNEL, brightness);
             }
             break;
-        case 3: // strobe
-            ledcWrite(LED_CHANNEL, (elapsedTime / 100) % 2 ? 255 : 0);
+        case 3: // strobe - use digitalWrite for fast on/off
+            digitalWrite(LED_PIN, (elapsedTime / 100) % 2 ? HIGH : LOW);
             break;
     }
 }
 
 void updateSoundSequence(AlertConfig& config, unsigned long currentTime) {
+    // Check if we've finished all sounds
     if (currentSoundIndex >= config.soundCount) return;
 
+    // Check if current sound duration has elapsed
     if (currentTime - lastSoundTime >= config.soundDurations[currentSoundIndex]) {
         // Stop current tone
         noTone(SPEAKER_PIN);
-
+        
         // Move to next sound
         currentSoundIndex++;
         lastSoundTime = currentTime;
 
+        // Play next sound if available
         if (currentSoundIndex < config.soundCount) {
             int freq = config.soundSequence[currentSoundIndex];
             if (freq > 0) {
@@ -157,7 +173,12 @@ void updateSoundSequence(AlertConfig& config, unsigned long currentTime) {
 void stopAllAlerts() {
     alertActive = false;
     currentAlertType = ALERT_UNKNOWN;
+    
+    // Turn off LED (works for both digitalWrite and PWM modes)
+    digitalWrite(LED_PIN, LOW);
     ledcWrite(LED_CHANNEL, 0);
+    
+    // Stop sound
     noTone(SPEAKER_PIN);
     digitalWrite(SPEAKER_PIN, LOW);
 }

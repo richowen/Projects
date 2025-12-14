@@ -1,17 +1,17 @@
 #include "config.h"
 
 // Network credentials and settings
-const char* WIFI_SSID = "WiFi";
+const char* WIFI_SSID = "IoT";
 const char* WIFI_PASSWORD = "Gliders1!";
 IPAddress STATIC_IP(192, 168, 1, 21);
 IPAddress GATEWAY(192, 168, 1, 1);
 IPAddress SUBNET(255, 255, 255, 0);
-IPAddress PRIMARY_DNS(8, 8, 8, 8);
+IPAddress PRIMARY_DNS(192, 168, 1, 1);
 IPAddress SECONDARY_DNS(8, 8, 4, 4);
 
 // Server and pin settings
-const int LED_PIN = 15;
-const int SPEAKER_PIN = 18;
+const int LED_PIN = 14;
+const int SPEAKER_PIN = 13;
 
 // System monitoring
 const int WDT_TIMEOUT = 30;

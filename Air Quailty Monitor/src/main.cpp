@@ -172,7 +172,30 @@ void initSensors() {
   Serial.print(PM25_I2C_ADDR, HEX);
   Serial.print("): ");
   pm25Available = pm25Sensor.begin();
-  Serial.println(pm25Available ? "OK" : "FAILED");
+  
+  if (pm25Available) {
+    // Wake up sensor from potential sleep mode
+    pm25Sensor.awake();
+    delay(100);
+    
+    // Get firmware version to verify sensor is responding
+    uint8_t version = pm25Sensor.gainVersion();
+    Serial.print("OK (v");
+    Serial.print(version);
+    Serial.println(")");
+    
+    // Warm-up period for laser sensor (30 seconds)
+    Serial.println("  Warming up PM2.5 sensor (30s)...");
+    for (int i = 30; i > 0; i--) {
+      Serial.print("  ");
+      Serial.print(i);
+      Serial.println("s remaining");
+      delay(1000);
+    }
+    Serial.println("  Warm-up complete!");
+  } else {
+    Serial.println("FAILED");
+  }
   
   // ENS160 Sensor
   Serial.print("ENS160 (0x");
@@ -226,18 +249,19 @@ void publishDiscovery() {
   Serial.println("\nPublishing Home Assistant discovery...");
   
   // PM2.5 Sensor - 3 measurements
+  // Note: Using particle counts instead of concentration (μg/m³) due to sensor firmware limitation
   if (pm25Available) {
-    publishSensorDiscovery("Air Quality PM1.0", "esp32_aq_pm1", 
+    publishSensorDiscovery("Air Quality PM1.0 Count", "esp32_aq_pm1",
                           "homeassistant/sensor/esp32_air_quality_pm1/state",
-                          "μg/m³", "pm1", "mdi:air-filter");
+                          "particles/0.1L", "", "mdi:air-filter");
     
-    publishSensorDiscovery("Air Quality PM2.5", "esp32_aq_pm25", 
+    publishSensorDiscovery("Air Quality PM2.5 Count", "esp32_aq_pm25",
                           "homeassistant/sensor/esp32_air_quality_pm25/state",
-                          "μg/m³", "pm25", "mdi:air-filter");
+                          "particles/0.1L", "", "mdi:air-filter");
     
-    publishSensorDiscovery("Air Quality PM10", "esp32_aq_pm10", 
+    publishSensorDiscovery("Air Quality PM10 Count", "esp32_aq_pm10",
                           "homeassistant/sensor/esp32_air_quality_pm10/state",
-                          "μg/m³", "pm10", "mdi:air-filter");
+                          "particles/0.1L", "", "mdi:air-filter");
   }
   
   // ENS160 Sensor - 3 measurements
@@ -313,15 +337,24 @@ void readAndPublishSensors() {
   
   // PM2.5 Sensor
   if (pm25Available) {
-    uint16_t pm1 = pm25Sensor.gainParticleConcentration_ugm3(PARTICLE_PM1_0_STANDARD);
-    uint16_t pm25 = pm25Sensor.gainParticleConcentration_ugm3(PARTICLE_PM2_5_STANDARD);
-    uint16_t pm10 = pm25Sensor.gainParticleConcentration_ugm3(PARTICLE_PM10_STANDARD);
+    // Note: gainParticleConcentration_ugm3() returns zeros on this sensor
+    // Using particle counts instead, which work properly
+    uint16_t pm1_count = pm25Sensor.gainParticleNum_Every0_1L(PARTICLENUM_1_0_UM_EVERY0_1L_AIR);
+    uint16_t pm25_count = pm25Sensor.gainParticleNum_Every0_1L(PARTICLENUM_2_5_UM_EVERY0_1L_AIR);
+    uint16_t pm10_count = pm25Sensor.gainParticleNum_Every0_1L(PARTICLENUM_10_UM_EVERY0_1L_AIR);
     
-    Serial.printf("PM1.0: %d | PM2.5: %d | PM10: %d μg/m³\n", pm1, pm25, pm10);
+    Serial.printf("PM1.0: %d | PM2.5: %d | PM10: %d particles/0.1L", pm1_count, pm25_count, pm10_count);
     
-    publishSensor("homeassistant/sensor/esp32_air_quality_pm1/state", pm1);
-    publishSensor("homeassistant/sensor/esp32_air_quality_pm25/state", pm25);
-    publishSensor("homeassistant/sensor/esp32_air_quality_pm10/state", pm10);
+    // Diagnostic: Warn if all readings are zero
+    if (pm1_count == 0 && pm25_count == 0 && pm10_count == 0) {
+      Serial.print(" [⚠️ All zeros - Very clean air or sensor issue]");
+    }
+    Serial.println();
+    
+    // Publish particle counts to MQTT
+    publishSensor("homeassistant/sensor/esp32_air_quality_pm1/state", pm1_count);
+    publishSensor("homeassistant/sensor/esp32_air_quality_pm25/state", pm25_count);
+    publishSensor("homeassistant/sensor/esp32_air_quality_pm10/state", pm10_count);
   }
   
   // ENS160 Sensor
