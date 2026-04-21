@@ -81,6 +81,18 @@ void ControlPanel::handleTemperatureChange() {
     sendHACommand(_config->getEntityId("ac_temp"), "set_value", &data);
 }
 
+void ControlPanel::handleBrightnessChange() {
+    int brightness = _sensorManager->getBrightnessPercentage();
+    
+    _logger->logf("INFO", "Control Panel: Sending stable brightness %d%% to Home Assistant", brightness);
+    
+    // Send brightness command to HA (display is already updated in processSensors)
+    StaticJsonDocument<128> data;
+    data["brightness_pct"] = brightness;
+    
+    sendHACommand(_config->getEntityId("lights_brightness"), "turn_on", &data);
+}
+
 // ========================================
 // PRIVATE METHODS
 // ========================================
@@ -145,20 +157,34 @@ void ControlPanel::processInputs() {
 }
 
 void ControlPanel::processSensors() {
-    // Get current live temperature for display
-    static int lastDisplayedTemp = -999;
-    int currentTemp = _sensorManager->getTemperatureSetpoint();
-    
-    // Update display continuously for live feedback while adjusting
-    if (currentTemp != lastDisplayedTemp) {
-        _displayManager->showTemperature(currentTemp);
-        lastDisplayedTemp = currentTemp;
-        _logger->logf("DEBUG", "Control Panel: Displaying live temp: %d°C", currentTemp);
-    }
-    
-    // Check for stable temperature changes to send to HA
-    if (_sensorManager->hasTemperatureChanged()) {
-        handleTemperatureChange();
+    if (_sensorManager->isBrightnessMode()) {
+        // Brightness control mode
+        static int lastDisplayedBrightness = -999;
+        int currentBrightness = _sensorManager->getBrightnessPercentage();
+        
+        if (currentBrightness != lastDisplayedBrightness) {
+            _displayManager->showBrightness(currentBrightness);
+            lastDisplayedBrightness = currentBrightness;
+            _logger->logf("DEBUG", "Control Panel: Displaying live brightness: %d%%", currentBrightness);
+        }
+        
+        if (_sensorManager->hasBrightnessChanged()) {
+            handleBrightnessChange();
+        }
+    } else {
+        // Temperature control mode
+        static int lastDisplayedTemp = -999;
+        int currentTemp = _sensorManager->getTemperatureSetpoint();
+        
+        if (currentTemp != lastDisplayedTemp) {
+            _displayManager->showTemperature(currentTemp);
+            lastDisplayedTemp = currentTemp;
+            _logger->logf("DEBUG", "Control Panel: Displaying live temp: %d°C", currentTemp);
+        }
+        
+        if (_sensorManager->hasTemperatureChanged()) {
+            handleTemperatureChange();
+        }
     }
 }
 
@@ -280,6 +306,9 @@ void ControlPanel::handleToggleSwitch(uint8_t switchIndex) {
 
     // Special handling for AC Bypass switch
     if (strcmp(buttonState->entityId, _config->getEntityId("ac_bypass")) == 0) {
+        // Notify sensor manager of bypass state change
+        _sensorManager->setACBypassState(isOn);
+        
         if (isOn) {
             // Switch ON = Turn on bypass boolean
             sendHACommand(_config->getEntityId("ac_bypass"), "turn_on");

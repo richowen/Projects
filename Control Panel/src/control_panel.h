@@ -54,6 +54,11 @@ public:
      */
     void handleTemperatureChange();
 
+    /**
+     * @brief Handle brightness changes
+     */
+    void handleBrightnessChange();
+
 private:
     IConfigManager* _config;
     ILogger* _logger;

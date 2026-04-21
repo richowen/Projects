@@ -98,6 +98,8 @@ const char* ConfigManager::getEntityId(const char* entityType) const {
     if (strcmp(entityType, "plex") == 0) return ENTITY_PLEX;
     if (strcmp(entityType, "lights") == 0) return ENTITY_LIGHTS;
     if (strcmp(entityType, "immersion") == 0) return ENTITY_IMMERSION;
+    if (strcmp(entityType, "light_scene") == 0) return ENTITY_LIGHT_SCENE;
+    if (strcmp(entityType, "lights_brightness") == 0) return ENTITY_LIGHTS_BRIGHTNESS;
 
     // Extra buttons
     if (strncmp(entityType, "extra_", 6) == 0) {

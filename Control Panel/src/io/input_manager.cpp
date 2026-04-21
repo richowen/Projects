@@ -34,7 +34,7 @@ bool InputManager::begin() {
     configureInput(2, _config->getPin("button_2"), _config->getEntityId("pc_shutdown"), "trigger", MOMENTARY_BUTTON);
     configureInput(3, _config->getPin("button_3"), _config->getEntityId("lights"), "trigger", MOMENTARY_BUTTON);
     configureInput(4, _config->getPin("button_4"), _config->getEntityId("immersion"), "switch", TOGGLE_SWITCH);
-    configureInput(5, _config->getPin("button_5"), _config->getEntityId("extra_1"), "toggle", MOMENTARY_BUTTON);
+    configureInput(5, _config->getPin("button_5"), _config->getEntityId("extra_1"), "turn_on", MOMENTARY_BUTTON);
     configureInput(6, _config->getPin("button_6"), _config->getEntityId("plex"), "trigger", MOMENTARY_BUTTON);
     configureInput(7, _config->getPin("button_7"), _config->getEntityId("extra_3"), "toggle", MOMENTARY_BUTTON);
     configureInput(8, _config->getPin("button_8"), _config->getEntityId("extra_4"), "toggle", MOMENTARY_BUTTON);

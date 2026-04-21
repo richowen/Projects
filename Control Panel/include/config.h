@@ -32,8 +32,12 @@
 #define ENTITY_LIGHTS "automation.control_panel_lights"
 #define ENTITY_IMMERSION "switch.immersion_switch"
 
+// Light control
+#define ENTITY_LIGHT_SCENE "scene.lights_evening"
+#define ENTITY_LIGHTS_BRIGHTNESS "light.desk_lamp"
+
 // Extra buttons (customize as needed)
-#define ENTITY_EXTRA_1 "switch.extra_1"
+#define ENTITY_EXTRA_1 "scene.lights_evening"
 #define ENTITY_EXTRA_2 "switch.extra_2"
 #define ENTITY_EXTRA_3 "switch.extra_3"
 #define ENTITY_EXTRA_4 "switch.extra_4"
@@ -78,6 +82,12 @@
 // ========================================
 #define TEMP_MIN 18  // Minimum temperature for AC control (°C)
 #define TEMP_MAX 31  // Maximum temperature for AC control (°C)
+
+// ========================================
+// BRIGHTNESS SETTINGS
+// ========================================
+#define BRIGHTNESS_MIN 0    // Minimum brightness percentage
+#define BRIGHTNESS_MAX 100  // Maximum brightness percentage
 
 // ========================================
 // TIMING CONFIGURATION

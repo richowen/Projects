@@ -165,6 +165,9 @@ public:
     // Temperature
     void showTemperature(int temp);
     
+    // Brightness
+    void showBrightness(int brightness);
+    
     // Boot sequence
     void showBootSequence();
     

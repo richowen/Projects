@@ -183,6 +183,30 @@ public:
      * @return ADC value
      */
     virtual int getRawADCReading() const = 0;
+
+    /**
+     * @brief Set AC bypass state to switch potentiometer mode
+     * @param active true if AC bypass is active (temperature mode), false for brightness mode
+     */
+    virtual void setACBypassState(bool active) = 0;
+
+    /**
+     * @brief Check if potentiometer is in brightness control mode
+     * @return true if in brightness mode, false if in temperature mode
+     */
+    virtual bool isBrightnessMode() const = 0;
+
+    /**
+     * @brief Get current brightness percentage
+     * @return brightness in % (0-100)
+     */
+    virtual int getBrightnessPercentage() const = 0;
+
+    /**
+     * @brief Check if brightness changed
+     * @return true if changed since last check
+     */
+    virtual bool hasBrightnessChanged() = 0;
 };
 
 /**

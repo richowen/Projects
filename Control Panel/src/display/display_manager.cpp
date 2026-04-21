@@ -460,6 +460,23 @@ void DisplayManager::showTemperature(int temp) {
 }
 
 // ========================================
+// BRIGHTNESS DISPLAY
+// ========================================
+
+void DisplayManager::showBrightness(int brightness) {
+    setMode(MODE_TEMP_DISPLAY);  // Reuse temp display mode
+    
+    char brightnessStr[4];
+    sprintf(brightnessStr, "%d", brightness);  // Just show number like temperature
+    
+    parola->displayClear();
+    parola->setTextAlignment(PA_LEFT);
+    parola->print(brightnessStr);
+    
+    rotateDisplayCCW();
+}
+
+// ========================================
 // BOOT SEQUENCE
 // ========================================
 
