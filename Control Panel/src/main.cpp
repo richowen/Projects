@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include "esp_task_wdt.h"
+#include "nvs_flash.h"
+
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -12,8 +14,10 @@
 #include "io/input_manager.h"
 #include "io/sensor_manager.h"
 #include "display/display_manager.h"
+#include "network/web_server.h"
 #include "control_panel.h"
 #include "config.h"
+
 
 // ========================================
 // HARDWARE SETUP
@@ -62,6 +66,10 @@ DisplayManager displayManager;
 // Main control panel orchestrator
 ControlPanel controlPanel(&configManager, &logger, &wifiManager, &haClient,
                          &inputManager, &sensorManager, &displayManager);
+
+// Web server for live control panel configuration UI
+WebServerManager webServerManager(&configManager, &inputManager, &wifiManager, &logger);
+
 
 // ========================================
 // BUTTON STATE TRACKING
@@ -186,7 +194,19 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  // Initialize NVS flash before anything reads persisted config from it.
+  // (ConfigManager is a global object constructed before setup() runs, so
+  // its constructor can't reliably use NVS yet - configManager.load() below
+  // re-loads the saved input config now that NVS is ready.)
+  esp_err_t nvsErr = nvs_flash_init();
+  if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    nvs_flash_erase();
+    nvs_flash_init();
+  }
+  configManager.load();
+
   Serial.println("\n\n");
+
   Serial.println("====================================");
   Serial.println("  HOME CONTROL PANEL - REFACTORED");
   Serial.println("====================================");
@@ -223,10 +243,22 @@ void setup() {
     }
   }
 
+  // Start web server for live configuration UI (requires WiFi to be connected)
+  Serial.print("[INIT] Web Server... ");
+  if (webServerManager.begin()) {
+    Serial.println("OK");
+    Serial.print("[INFO] Access the control panel UI at: http://");
+    Serial.println(wifiManager.getIPAddress());
+    Serial.println("[INFO] Or via: http://controlpanel.local");
+  } else {
+    Serial.println("FAILED");
+  }
+
   Serial.println("\n====================================");
   Serial.println("         SETUP COMPLETE!");
   Serial.println("====================================");
   Serial.println("\nWaiting for input...\n");
+
 
   digitalWrite(configManager.getPin("status_led"), HIGH);
 

@@ -20,18 +20,25 @@
 // ========================================
 
 ConfigManager::ConfigManager() {
-    // Constructor - configuration is loaded from config.h via preprocessor
+    // Note: NVS is not yet initialized at global-constructor time, so we can't
+    // reliably load saved input config here. loadInputConfig() is called again
+    // from load(), which main.cpp invokes after nvs_flash_init() in setup().
+    loadInputConfig();
 }
+
+
 
 // ========================================
 // ICONFIGMANAGER INTERFACE IMPLEMENTATION
 // ========================================
 
 bool ConfigManager::load() {
-    // For now, configuration is compile-time only
-    // Future enhancement: load from EEPROM/SD card
+    // Re-load runtime-editable input config from NVS now that NVS flash has
+    // been initialized (must be called after nvs_flash_init() in setup()).
+    loadInputConfig();
     return validateConfig();
 }
+
 
 bool ConfigManager::save() {
     // For now, configuration is read-only
@@ -116,9 +123,70 @@ const char* ConfigManager::getEntityId(const char* entityType) const {
     return ""; // Invalid entity type
 }
 
+const char* ConfigManager::getInputEntityId(uint8_t index) const {
+    if (index >= MAX_INPUTS) return "";
+    return _inputEntityId[index].c_str();
+}
+
+const char* ConfigManager::getInputService(uint8_t index) const {
+    if (index >= MAX_INPUTS) return "";
+    return _inputService[index].c_str();
+}
+
+uint8_t ConfigManager::getInputType(uint8_t index) const {
+    if (index >= MAX_INPUTS) return 0;
+    return _inputType[index];
+}
+
+const char* ConfigManager::getInputName(uint8_t index) const {
+    static const char* names[] = {
+        "AC Power", "AC Bypass", "PC Shutdown", "Lights", "Immersion",
+        "Extra 1", "Plex On", "Extra 3", "Extra 4", "Extra 5"
+    };
+    if (index >= MAX_INPUTS) return "Unknown";
+    return names[index];
+}
+
+const char* ConfigManager::getInputLabel(uint8_t index) const {
+    if (index >= MAX_INPUTS) return "";
+    return _inputLabel[index].c_str();
+}
+
+bool ConfigManager::setInputConfig(uint8_t index, const char* entityId, const char* service, uint8_t type, const char* label) {
+    if (index >= MAX_INPUTS) return false;
+    if (entityId == nullptr || service == nullptr) return false;
+    if (type > 1) return false;
+
+    _inputEntityId[index] = entityId;
+    _inputService[index] = service;
+    _inputType[index] = type;
+    _inputLabel[index] = (label != nullptr) ? label : "";
+
+    // Persist to NVS
+    if (!_prefs.begin("cp_inputs", false)) {
+        return false;
+    }
+
+    char keyEnt[16], keySvc[16], keyTyp[16], keyLbl[16];
+    snprintf(keyEnt, sizeof(keyEnt), "e%d", index);
+    snprintf(keySvc, sizeof(keySvc), "s%d", index);
+    snprintf(keyTyp, sizeof(keyTyp), "t%d", index);
+    snprintf(keyLbl, sizeof(keyLbl), "l%d", index);
+
+    _prefs.putString(keyEnt, _inputEntityId[index]);
+    _prefs.putString(keySvc, _inputService[index]);
+    _prefs.putUChar(keyTyp, _inputType[index]);
+    _prefs.putString(keyLbl, _inputLabel[index]);
+
+    _prefs.end();
+    return true;
+}
+
+
 // ========================================
 // ADDITIONAL CONFIGURATION METHODS
 // ========================================
+
 
 bool ConfigManager::isDebugMode() const {
     return DEBUG_MODE;
@@ -224,3 +292,81 @@ int ConfigManager::getButtonPin(uint8_t buttonIndex) const {
 int ConfigManager::getStatusLEDPin() const {
     return STATUS_LED_PIN;
 }
+
+// ========================================
+// RUNTIME-EDITABLE INPUT CONFIGURATION
+// ========================================
+
+const char* ConfigManager::getDefaultInputEntityId(uint8_t index) const {
+    switch (index) {
+        case 0: return ENTITY_AC_UNIT;
+        case 1: return ENTITY_AC_BYPASS;
+        case 2: return ENTITY_PC_SHUTDOWN;
+        case 3: return ENTITY_LIGHTS;
+        case 4: return ENTITY_IMMERSION;
+        case 5: return ENTITY_EXTRA_1;
+        case 6: return ENTITY_PLEX;
+        case 7: return ENTITY_EXTRA_3;
+        case 8: return ENTITY_EXTRA_4;
+        case 9: return ENTITY_EXTRA_5;
+        default: return "";
+    }
+}
+
+const char* ConfigManager::getDefaultInputService(uint8_t index) const {
+    switch (index) {
+        case 0: return "toggle";
+        case 1: return "input_boolean";
+        case 2: return "trigger";
+        case 3: return "trigger";
+        case 4: return "switch";
+        case 5: return "toggle";
+        case 6: return "trigger";
+        case 7: return "toggle";
+        case 8: return "toggle";
+        case 9: return "switch";
+        default: return "toggle";
+    }
+}
+
+uint8_t ConfigManager::getDefaultInputType(uint8_t index) const {
+    // 0 = MOMENTARY_BUTTON, 1 = TOGGLE_SWITCH
+    switch (index) {
+        case 1: return 1; // AC Bypass - toggle switch
+        case 4: return 1; // Immersion - toggle switch
+        case 9: return 1; // Extra 5 - toggle switch
+        default: return 0; // All others momentary
+    }
+}
+
+
+void ConfigManager::loadInputConfig() {
+    bool hasPrefs = _prefs.begin("cp_inputs", true); // read-only
+
+    for (uint8_t i = 0; i < MAX_INPUTS; i++) {
+        char keyEnt[16], keySvc[16], keyTyp[16], keyLbl[16];
+        snprintf(keyEnt, sizeof(keyEnt), "e%d", i);
+        snprintf(keySvc, sizeof(keySvc), "s%d", i);
+        snprintf(keyTyp, sizeof(keyTyp), "t%d", i);
+        snprintf(keyLbl, sizeof(keyLbl), "l%d", i);
+
+        if (hasPrefs && _prefs.isKey(keyEnt)) {
+            _inputEntityId[i] = _prefs.getString(keyEnt, getDefaultInputEntityId(i));
+            _inputService[i] = _prefs.getString(keySvc, getDefaultInputService(i));
+            _inputType[i] = _prefs.getUChar(keyTyp, getDefaultInputType(i));
+            _inputLabel[i] = _prefs.getString(keyLbl, "");
+        } else {
+            _inputEntityId[i] = getDefaultInputEntityId(i);
+            _inputService[i] = getDefaultInputService(i);
+            _inputType[i] = getDefaultInputType(i);
+            _inputLabel[i] = "";
+        }
+    }
+
+
+    if (hasPrefs) {
+        _prefs.end();
+    }
+}
+
+

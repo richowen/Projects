@@ -4,8 +4,10 @@ A physical control panel using ESP32 to control Home Assistant entities via butt
 
 ## Features
 
+- **Live Web UI**: Graphical web interface hosted on the ESP32 itself, showing a visual layout of the physical panel. Reassign any button/switch to a different Home Assistant entity/service live, no reflashing required.
 - **WiFi Connectivity**: Connects to Home Assistant via REST API
 - **Physical Controls**:
+
   - AC power on/off button
   - AC automation bypass toggle
   - PC shutdown button
@@ -120,7 +122,18 @@ pio run --target upload
 
 Or use the PlatformIO upload button in VS Code.
 
-### 6. Monitor Serial Output
+### 6. Upload the Web UI Filesystem
+
+The graphical web UI (HTML/CSS/JS) lives in the `data/` directory and is uploaded to the ESP32's LittleFS filesystem **separately** from the firmware:
+
+```bash
+pio run --target uploadfs
+```
+
+Run this once after the first firmware upload, and again any time you change files in `data/`. It does not require re-flashing the firmware.
+
+### 7. Monitor Serial Output
+
 
 ```bash
 pio device monitor
@@ -128,7 +141,32 @@ pio device monitor
 
 Or use the Serial Monitor in VS Code (115200 baud).
 
+## Web UI - Live Configuration
+
+Once the firmware and filesystem are uploaded and the panel connects to WiFi, a graphical web UI is available for viewing and editing the function of each physical button/switch **without recompiling or reflashing**.
+
+### Accessing the Web UI
+
+- Via mDNS (if supported by your network/OS): `http://controlpanel.local`
+- Via IP address: check the serial monitor output at boot for the assigned IP (also printed after `[INIT] Web Server... OK`)
+
+### What You Can Do
+
+- View a graphical layout of the panel mirroring the physical device (toggle switches, push buttons, display, and potentiometer).
+- Click any button/switch tile to open an edit form and change its:
+  - **Entity ID** (e.g. `light.living_room`)
+  - **Service/domain** (e.g. `toggle`, `switch`, `trigger`)
+  - **Type** (Momentary Button or Toggle Switch)
+- Changes are saved to persistent storage (NVS) on the ESP32 and take effect immediately - no reboot needed.
+
+### Notes
+
+- WiFi credentials and the Home Assistant URL/token remain fixed in `include/secrets.h` and are **not** editable via the web UI.
+- The web UI has **no authentication** - it is intended for use on a trusted local network only.
+- If you edit files in `data/`, re-run `pio run --target uploadfs` to push the changes to the device.
+
 ## Configuration
+
 
 ### Adjusting Pin Assignments
 

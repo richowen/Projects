@@ -47,23 +47,17 @@ void ControlPanel::update() {
 }
 
 void ControlPanel::handleButtonPress(uint8_t buttonIndex) {
-    const char* buttonName = _inputManager->getButtonName(buttonIndex);
-
-    // Get button state - we need to cast from void* to concrete type
-    const void* voidState = _inputManager->getButtonState(buttonIndex);
-    const InputManager::ButtonState* buttonState = static_cast<const InputManager::ButtonState*>(voidState);
-
-    if (!buttonState) return;
-
-    // Special handling for specific buttons
-    if (strcmp(buttonState->entityId, _config->getEntityId("pc_shutdown")) == 0) {
+    // Special handling for specific physical button positions (hold-to-activate safety buttons)
+    // These are tied to the physical button's index/wiring, not its (user-editable) entity/service
+    if (buttonIndex == 2) {        // PC Shutdown button position
         handlePCShutdownButton(buttonIndex);
-    } else if (strcmp(buttonState->entityId, _config->getEntityId("plex")) == 0) {
+    } else if (buttonIndex == 6) { // Plex On button position
         handlePlexOnButton(buttonIndex);
     } else {
         handleNormalButton(buttonIndex);
     }
 }
+
 
 void ControlPanel::handleSwitchChange(uint8_t switchIndex) {
     handleToggleSwitch(switchIndex);
@@ -304,8 +298,9 @@ void ControlPanel::handleToggleSwitch(uint8_t switchIndex) {
     _logger->logf("INFO", "Control Panel: Switch %s changed to %s",
                   _inputManager->getButtonName(switchIndex), isOn ? "ON" : "OFF");
 
-    // Special handling for AC Bypass switch
-    if (strcmp(buttonState->entityId, _config->getEntityId("ac_bypass")) == 0) {
+    // Special handling for AC Bypass switch (physical position, index 1)
+    if (switchIndex == 1) {
+
         // Notify sensor manager of bypass state change
         _sensorManager->setACBypassState(isOn);
         

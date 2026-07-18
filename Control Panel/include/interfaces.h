@@ -281,6 +281,54 @@ public:
     virtual const char* getEntityId(const char* entityType) const = 0;
 
     /**
+     * @brief Get entity ID for a physical input (button/switch) by index
+     * @param index Input index (0-9)
+     * @return entity ID string
+     */
+    virtual const char* getInputEntityId(uint8_t index) const = 0;
+
+    /**
+     * @brief Get service/domain for a physical input by index
+     * @param index Input index (0-9)
+     * @return service string
+     */
+    virtual const char* getInputService(uint8_t index) const = 0;
+
+    /**
+     * @brief Get input type for a physical input by index
+     * @param index Input index (0-9)
+     * @return 0 = momentary button, 1 = toggle switch
+     */
+    virtual uint8_t getInputType(uint8_t index) const = 0;
+
+    /**
+     * @brief Get friendly display name for a physical input by index
+     * @param index Input index (0-9)
+     * @return name string
+     */
+    virtual const char* getInputName(uint8_t index) const = 0;
+
+    /**
+     * @brief Get user-defined friendly label for a physical input's assigned entity
+     * @param index Input index (0-9)
+     * @return label string (empty string if not set by user)
+     */
+    virtual const char* getInputLabel(uint8_t index) const = 0;
+
+    /**
+     * @brief Update and persist the function of a physical input (live reconfiguration)
+     * @param index Input index (0-9)
+     * @param entityId New entity ID
+     * @param service New service/domain
+     * @param type New input type (0 = momentary, 1 = toggle)
+     * @param label Optional user-friendly label (empty string = unset)
+     * @return true if updated and saved successfully
+     */
+    virtual bool setInputConfig(uint8_t index, const char* entityId, const char* service, uint8_t type, const char* label = "") = 0;
+
+
+
+    /**
      * @brief Check if debug mode is enabled
      * @return true if debug mode
      */

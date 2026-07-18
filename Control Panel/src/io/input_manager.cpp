@@ -15,11 +15,18 @@ InputManager::InputManager(IConfigManager* config, ILogger* logger)
 
     // Initialize button states
     for (uint8_t i = 0; i < MAX_BUTTONS; i++) {
-        _buttons[i] = {0, HIGH, HIGH, 0, "", "", MOMENTARY_BUTTON};
+        _buttons[i].pin = 0;
+        _buttons[i].lastState = HIGH;
+        _buttons[i].currentState = HIGH;
+        _buttons[i].lastDebounceTime = 0;
+        _buttons[i].entityId[0] = '\0';
+        _buttons[i].service[0] = '\0';
+        _buttons[i].type = MOMENTARY_BUTTON;
         _buttonPressedFlags[i] = false;
         _switchChangedFlags[i] = false;
     }
 }
+
 
 // ========================================
 // IINPUTMANAGER INTERFACE IMPLEMENTATION
@@ -28,23 +35,23 @@ InputManager::InputManager(IConfigManager* config, ILogger* logger)
 bool InputManager::begin() {
     _logger->info("Input Manager: Initializing...");
 
-    // Configure default button/switch setup (matching original)
-    configureInput(0, _config->getPin("button_0"), _config->getEntityId("ac_unit"), "toggle", MOMENTARY_BUTTON);
-    configureInput(1, _config->getPin("button_1"), _config->getEntityId("ac_bypass"), "input_boolean", TOGGLE_SWITCH);
-    configureInput(2, _config->getPin("button_2"), _config->getEntityId("pc_shutdown"), "trigger", MOMENTARY_BUTTON);
-    configureInput(3, _config->getPin("button_3"), _config->getEntityId("lights"), "trigger", MOMENTARY_BUTTON);
-    configureInput(4, _config->getPin("button_4"), _config->getEntityId("immersion"), "switch", TOGGLE_SWITCH);
-    configureInput(5, _config->getPin("button_5"), _config->getEntityId("extra_1"), "turn_on", MOMENTARY_BUTTON);
-    configureInput(6, _config->getPin("button_6"), _config->getEntityId("plex"), "trigger", MOMENTARY_BUTTON);
-    configureInput(7, _config->getPin("button_7"), _config->getEntityId("extra_3"), "toggle", MOMENTARY_BUTTON);
-    configureInput(8, _config->getPin("button_8"), _config->getEntityId("extra_4"), "toggle", MOMENTARY_BUTTON);
-    configureInput(9, _config->getPin("button_9"), _config->getEntityId("extra_5"), "toggle", MOMENTARY_BUTTON);
+    // Configure button/switch setup from runtime-editable ConfigManager
+    // (falls back to config.h defaults if no saved config exists in NVS)
+    for (uint8_t i = 0; i < MAX_BUTTONS; i++) {
+        char pinKey[16];
+        snprintf(pinKey, sizeof(pinKey), "button_%d", i);
+
+        InputType type = (_config->getInputType(i) == 1) ? TOGGLE_SWITCH : MOMENTARY_BUTTON;
+        configureInput(i, _config->getPin(pinKey), _config->getInputEntityId(i),
+                       _config->getInputService(i), type);
+    }
 
     initializePins();
 
     _logger->info("Input Manager: Initialization complete");
     return true;
 }
+
 
 void InputManager::update() {
     for (uint8_t i = 0; i < MAX_BUTTONS; i++) {
@@ -85,8 +92,10 @@ bool InputManager::configureInput(uint8_t index, int pin, const char* entityId, 
     if (index >= MAX_BUTTONS) return false;
 
     _buttons[index].pin = pin;
-    _buttons[index].entityId = entityId;
-    _buttons[index].service = service;
+    strncpy(_buttons[index].entityId, entityId ? entityId : "", sizeof(_buttons[index].entityId) - 1);
+    _buttons[index].entityId[sizeof(_buttons[index].entityId) - 1] = '\0';
+    strncpy(_buttons[index].service, service ? service : "", sizeof(_buttons[index].service) - 1);
+    _buttons[index].service[sizeof(_buttons[index].service) - 1] = '\0';
     _buttons[index].type = type;
     _buttons[index].lastState = HIGH;
     _buttons[index].currentState = HIGH;
@@ -99,6 +108,24 @@ bool InputManager::configureInput(uint8_t index, int pin, const char* entityId, 
 
     return true;
 }
+
+bool InputManager::reloadInputConfig(uint8_t index) {
+    if (index >= MAX_BUTTONS) return false;
+
+    InputType type = (_config->getInputType(index) == 1) ? TOGGLE_SWITCH : MOMENTARY_BUTTON;
+    strncpy(_buttons[index].entityId, _config->getInputEntityId(index), sizeof(_buttons[index].entityId) - 1);
+    _buttons[index].entityId[sizeof(_buttons[index].entityId) - 1] = '\0';
+    strncpy(_buttons[index].service, _config->getInputService(index), sizeof(_buttons[index].service) - 1);
+    _buttons[index].service[sizeof(_buttons[index].service) - 1] = '\0';
+    _buttons[index].type = type;
+
+    _logger->logf("INFO", "Input Manager: Live-reloaded input %d - Entity: %s, Service: %s, Type: %s",
+                  index, _buttons[index].entityId, _buttons[index].service,
+                  type == MOMENTARY_BUTTON ? "Momentary" : "Toggle");
+
+    return true;
+}
+
 
 const InputManager::ButtonState* InputManager::getButtonState(uint8_t index) const {
     if (index >= MAX_BUTTONS) return nullptr;

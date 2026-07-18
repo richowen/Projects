@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control Panel</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Control Panel</h1>
+    <div id="status" class="status">
+      <span id="wifi-dot" class="dot"></span>
+      <span id="wifi-text">Connecting...</span>
+    </div>
+  </header>
+
+  <main class="panel">
+    <div class="cell area-sw9" id="tile-9"></div>
+    <div class="cell area-sw4" id="tile-4"></div>
+    <div class="cell area-disp display-placeholder">
+      <div class="display-screen">8x8</div>
+    </div>
+
+    <div class="cell area-btn8" id="tile-8"></div>
+    <div class="cell area-btn7" id="tile-7"></div>
+
+    <div class="cell area-btn6" id="tile-6"></div>
+    <div class="cell area-btn5" id="tile-5"></div>
+    <div class="cell area-pot pot-placeholder">
+      <div class="pot-knob"></div>
+      <div class="pot-label">POT</div>
+    </div>
+
+    <div class="cell area-btn2" id="tile-2"></div>
+    <div class="cell area-btn3" id="tile-3"></div>
+    <div class="cell area-btn0" id="tile-0"></div>
+    <div class="cell area-sw1"  id="tile-1"></div>
+  </main>
+
+
+  <div id="modal-backdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 id="modal-title">Edit Input</h2>
+      <label>
+        Entity ID
+        <input type="text" id="input-entity" placeholder="light.living_room">
+      </label>
+      <label>
+        Friendly Label (optional)
+        <input type="text" id="input-label" placeholder="e.g. Lucy's Immersion Switch">
+      </label>
+      <label>
+        Service
+        <select id="input-service"></select>
+      </label>
+
+      <label id="custom-service-wrapper" class="hidden">
+        Custom Service
+        <input type="text" id="input-service-custom" placeholder="e.g. my_custom_service">
+      </label>
+
+      <label>
+        Type
+        <select id="input-type">
+          <option value="0">Momentary Button</option>
+          <option value="1">Toggle Switch</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button id="btn-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="btn-save" class="btn btn-primary">Save</button>
+      </div>
+      <p id="modal-error" class="modal-error hidden"></p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

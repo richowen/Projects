@@ -27,10 +27,11 @@ public:
         bool lastState;
         bool currentState;
         unsigned long lastDebounceTime;
-        const char* entityId;
-        const char* service;
+        char entityId[64];
+        char service[32];
         InputType type;
     };
+
 
     /**
      * @brief Constructor
@@ -58,6 +59,14 @@ public:
      * @return true if configured successfully
      */
     bool configureInput(uint8_t index, int pin, const char* entityId, const char* service, InputType type);
+
+    /**
+     * @brief Reload a single input's entity/service/type from ConfigManager (live update, no reboot)
+     * @param index Input index (0-9)
+     * @return true if reloaded successfully
+     */
+    bool reloadInputConfig(uint8_t index);
+
 
     /**
      * @brief Get button state structure (for advanced usage)
